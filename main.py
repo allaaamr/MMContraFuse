@@ -98,7 +98,6 @@ parser.add_argument('--fusion',          type=str, choices=['concat', 'bi_attn',
 parser.add_argument('--drop_out',        action='store_true', default=True, help='Enable dropout (p=0.25)')
 parser.add_argument('--model_size_wsi',  type=str, default='small', help='Network size of AMIL model')
 parser.add_argument('--model_size_omic', type=str, default='small', help='Network size of SNN model')
-
 parser.add_argument('--n_classes', type=int, default=4)
 
 
@@ -154,34 +153,24 @@ seed_torch(args.seed)
 
 encoding_size = 1024
 
-print(f"args.env: {args.env}")
+# Depending on the downstream task the label column to predict is 
+if args.task == "survival":
+    label_col = "survival"
+    n_bins = args.n_classes
+else:
+	label_col = "type"
 
-print('\nLoad Dataset')
-if args.env =="local":
-	csv_path = rf'C:\Users\Amr\Desktop\Masters\Multi-Modal-Fusion\data\cna_mut_177df.csv'
-	split_dir = fr'C:\Users\Amr\Desktop\Masters\Multi-Modal-Fusion\data\splits_177'
-	data_dir = '/mnt/lustre-grete/usr/u12402/Features/path_patches/patches'
-	mri_data_dir =rf'C:\Users\Amr\Desktop\Masters\Multi-Modal-Fusion\data\braTs_BBx'
-elif args.env =="local-mac":
-#	csv_path = f'/Users/alaaabdelazeem/Desktop/Projects/AI/Multi-Modal-Fusion/data/raw/{args.data}.csv'
-	csv_path = '/Users/alaaabdelazeem/Desktop/Masters/Multi-Modal-Fusion/data/cna_mut_177df.csv'
-	split_dir = '/Users/alaaabdelazeem/Desktop/Masters/Multi-Modal-Fusion/data/splits_177'
-	data_dir = '/mnt/lustre-grete/usr/u12402/Features/path_patches/patches'
-	mri_data_dir ='/Users/alaaabdelazeem/Desktop/Masters/Multi-Modal-Fusion/data/braTs_BBx'
-
-
+	
 dataset = Generic_MIL_Dataset(csv_path = csv_path,
                                 mode = args.mode,
-                                apply_sig = args.apply_sig,
                                 data_dir= data_dir,
                                 mri_data_dir = mri_data_dir,
                                 shuffle = False, 
                                 seed = args.seed, 
                                 print_info = True,
                                 patient_strat= False,
-                                n_bins=4,
-                                label_col = 'survival',
-                                ignore=[]) 
+                                n_bins=n_bins,
+                                label_col = label_col) 
 
 if __name__ == "__main__":
 	start = timer()

@@ -23,9 +23,9 @@ class Generic_Dataset(Dataset):
         shuffle = False, 
         seed = 7, 
         print_info = True,
-        label_col: str = "survival",          # <--  "type" or "survival"
-        task: str = "type_classification",        # <-- NEW: "type_classification" | "risk_classification" 
-        n_bins: int = 4,                      # <-- used if task == "survival_binned"
+        label_col: str = "survival",  # <--  "type" or "survival"
+        task: str = "subtype",        # <--  "subtype" | "risk_classification" 
+        n_bins: int = 4,              # <-- used if task == "survival_binned"
         patient_strat=False,
         eps=1e-6):
         r"""
@@ -274,10 +274,9 @@ class Generic_Dataset(Dataset):
     def __getitem__(self, idx):
         return None
 
-
 class Generic_MIL_Dataset(Generic_Dataset):
     def __init__(self, data_dir, mri_data_dir,mode: str='omic', **kwargs):
-        super(Generic_MIL_Survival_Dataset, self).__init__(**kwargs)
+        super(Generic_MIL_Dataset, self).__init__(**kwargs)
         self.data_dir = data_dir
         self.mri_data_dir = mri_data_dir
         self.mode = mode
@@ -432,7 +431,6 @@ class Generic_MIL_Dataset(Generic_Dataset):
 
                     return (mri_tensors, path_features, genomic_features.unsqueeze(dim=0), label, event_time, c, slide_ids) 
                 
-
 def save_splits(split_datasets, column_keys, filename, boolean_style=False):
 	splits = [split_datasets[i].slide_data['slide_id'] for i in range(len(split_datasets))]
 	if not boolean_style:

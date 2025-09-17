@@ -127,9 +127,8 @@ def transform_mut_matrix(df: pd.DataFrame, genes_to_keep) -> pd.DataFrame:
         mutated_genes = df.loc[df['case_id'] == patient, 'Hugo_Symbol']
         # Set the corresponding entries in the mutation matrix to 1
         mutation_matrix.loc[patient, mutated_genes.unique()] = 1 
-        # filter insignificant genes
-        mutation_matrix = mutation_matrix[[col for col in mutation_matrix.columns if col in genes_to_keep]]
 
+    mutation_matrix.reset_index()
     return mutation_matrix
 
 # -------------------------
@@ -265,6 +264,9 @@ def main():
         df_cna = filter_genes(df_cna_all, sig_genes, "_cna")
         ok(f"CNA filtered shape: {df_cna.shape}")
 
+        df_cna_all['PatientID'] = df_cna_all['PatientID'].str.slice(0, -3)
+        df_cna['PatientID'] = df_cna['PatientID'].str.slice(0, -3)
+
         step("Saving CNA outputs")
         df_cna_all.to_csv(os.path.join(args.outdir, "combined_CNA_all.csv"), index=False)
         df_cna.to_csv(os.path.join(args.outdir, "combined_CNA_filtered.csv"), index=False)
@@ -309,6 +311,9 @@ def main():
         df_rna = filter_genes(df_rna_all, sig_genes, "_rna")
         ok(f"RNA filtered shape: {df_rna.shape}")
 
+        df_rna_all['PatientID'] = df_rna_all['PatientID'].str.slice(0, -3)
+        df_rna['PatientID'] = df_rna['PatientID'].str.slice(0, -3)
+
         step("Saving RNA outputs")
         df_rna_all.to_csv(os.path.join(args.outdir, "combined_RNA_all.csv"), index=False)
         df_rna.to_csv(os.path.join(args.outdir, "combined_RNA_filtered.csv"), index=False)
@@ -342,6 +347,7 @@ def main():
         step("GBM Dataframe Creation")
         df_gbm = transform_mut_matrix(df_gbm_mut, sig_genes)
         ok(f"GBM MUT dataframe created  {df_gbm.shape}")
+        print(df_gbm.head())
 
         step("LGG Dataframe Creation")
         df_lgg = transform_mut_matrix(df_lgg_mut, sig_genes)
@@ -350,6 +356,8 @@ def main():
         step("Combining LGG + GBM ")
         df_mut_all = pd.concat([df_lgg, df_gbm], axis=0, ignore_index=True)
         ok(f"MUT concatenated shape: {df_mut_all.shape}")
+
+        df_mut_all['case_id'] = df_mut_all['case_id'].str.slice(0, -3)
 
         step("Saving MUT outputs")
         df_mut_all.to_csv(os.path.join(args.outdir, "combined_MUT_filtered.csv"), index=False)
