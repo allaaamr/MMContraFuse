@@ -80,7 +80,7 @@ parser.add_argument('--env', type=str, default='server')
 parser.add_argument('--xai', action='store_true', help="Enable XAI (e.g., SHAP, IG) analysis")
 
 parser.add_argument('--path_dir',   type=str, default='path/to/data_root_dir', help='Data directory to WSI features (extracted via CLAM')
-parser.add_argument('--csv',   type=str, default='data/processed_tabular_data/cna_clinical.csv', help='directory to clinical and genomics csv file')
+parser.add_argument('--csv',   type=str, default='data/processed_tabular_data/rna_clinical.csv', help='directory to clinical and genomics csv file')
 parser.add_argument('--mri_dir',   type=str, default='data/2.5D_MRIs', help='directory to MRI data')
 
 parser.add_argument('--seed', 			 type=int, default=1, help='Random seed for reproducible experiment (default: 1)')
