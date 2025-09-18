@@ -1,10 +1,7 @@
 from __future__ import print_function
 import numpy as np
-import torch_geometric
 import argparse
-import pdb
 import os
-import math
 import sys
 from timeit import default_timer as timer
 
@@ -36,7 +33,7 @@ def main(args):
     for i in range(0, 5):
         ### Get the Train + Val Dataset Loader.
         train_dataset, val_dataset = dataset.return_splits(
-                csv_path='{}/split_{}.csv'.format(split_dir, i))
+                csv_path='{}/split_{}.csv'.format(args.split_dir, i))
 
         print('training: {}, validation: {}'.format(len(train_dataset), len(val_dataset)))
         datasets = (train_dataset, val_dataset)
@@ -60,21 +57,20 @@ def main(args):
     best_fold = np.argmax(c_indices)
     best_model = models[best_fold]
 
-    torch.save(best_model.state_dict(), os.path.join(args.results_dir, f"best_model_{args.model_type}_d3.pt"))
-    pickle_obj(val_loaders[best_fold], os.path.join(args.results_dir,f"val_loader_{args.model_type}_d3.pkl"))
-    pickle_obj(val_split[best_fold], os.path.join(args.results_dir,f"val_split_{args.model_type}_d3.pkl"))
-    pickle_obj(train_loaders[best_fold], os.path.join(args.results_dir,f"train_loader_{args.model_type}_d3.pkl"))
-    pickle_obj(train_split[best_fold], os.path.join(args.results_dir,f"train_split_{args.model_type}_d3.pkl"))
-    pickle_obj(args, os.path.join(args.results_dir,f"args_{args.model_type}_d3.pkl"))
+    torch.save(best_model.state_dict(), os.path.join(args.results_dir, f"best_model_{args.mode}_d3.pt"))
+    pickle_obj(val_loaders[best_fold], os.path.join(args.results_dir,f"val_loader_{args.mode}_d3.pkl"))
+    pickle_obj(val_split[best_fold], os.path.join(args.results_dir,f"val_split_{args.mode}_d3.pkl"))
+    pickle_obj(train_loaders[best_fold], os.path.join(args.results_dir,f"train_loader_{args.mode}_d3.pkl"))
+    pickle_obj(train_split[best_fold], os.path.join(args.results_dir,f"train_split_{args.mode}_d3.pkl"))
+    pickle_obj(args, os.path.join(args.results_dir,f"args_{args.mode}_d3.pkl"))
 
     sum =0
     for i in c_indices:
         print(i)
         sum+=i
     print('Average ', sum/len(c_indices))
-
-end = timer()
-print('Time: %f seconds' % ( end - start))
+    end = timer()
+    print('Time: %f seconds' % ( end - start))
 
 
 ### Training settings
@@ -83,16 +79,19 @@ parser = argparse.ArgumentParser(description='Configurations for Analysis on TCG
 parser.add_argument('--env', type=str, default='server')
 parser.add_argument('--xai', action='store_true', help="Enable XAI (e.g., SHAP, IG) analysis")
 
-parser.add_argument('--data_root_dir',   type=str, default='path/to/data_root_dir', help='Data directory to WSI features (extracted via CLAM')
+parser.add_argument('--path_dir',   type=str, default='path/to/data_root_dir', help='Data directory to WSI features (extracted via CLAM')
+parser.add_argument('--csv',   type=str, default='data/processed_tabular_data/cna_clinical.csv', help='directory to clinical and genomics csv file')
+parser.add_argument('--mri_dir',   type=str, default='data/2.5D_MRIs', help='directory to MRI data')
+
 parser.add_argument('--seed', 			 type=int, default=1, help='Random seed for reproducible experiment (default: 1)')
 parser.add_argument('--k', 			     type=int, default=5, help='Number of folds (default: 5)')
 parser.add_argument('--k_start',		 type=int, default=-1, help='Start fold (Default: -1, last fold)')
 parser.add_argument('--k_end',			 type=int, default=-1, help='End fold (Default: -1, first fold)')
 parser.add_argument('--results_dir',     type=str, default='./results', help='Results directory (Default: ./results)')
-parser.add_argument('--split_dir',       type=str, default='/splits', help='Which cancer type within ./splits/<which_splits> to use for training. Used synonymously for "task" (Default: tcga_blca_100)')
+parser.add_argument('--split_dir',       type=str, default='data/splits', help='Which cancer type within ./splits/<which_splits> to use for training. Used synonymously for "task" (Default: tcga_blca_100)')
 
 ### Model Parameters.
-parser.add_argument('--task',            type=str, choices=['subtype', 'risk'], default='subtype', help='Specifies which downstream task to perform.')
+parser.add_argument('--task',            type=str, choices=['subtype', 'risk'], default='risk', help='Specifies which downstream task to perform.')
 parser.add_argument('--mode',            type=str, choices=['genomic', 'path', 'radio_1D' ,'radio_2.5D', 'radio_3D', 'pathomic', 'radiomic1D', 'radiomic2.5D', 'radiomic3D', 'radiopathomics'], default='genomic', help='Specifies which modalities to use.')
 parser.add_argument('--fusion',          type=str, choices=['concat', 'bi_attn', 'tri_attn', 'bi_contrast', 'tri_contrast'], default='concat', help='Type of fusion. (Default: concat).')
 parser.add_argument('--drop_out',        action='store_true', default=True, help='Enable dropout (p=0.25)')
@@ -131,6 +130,7 @@ parser.add_argument('--weighted_sample', action='store_true', default=True, help
 parser.add_argument('--early_stopping',  action='store_true', default=False, help='Enable early stopping')
 parser.add_argument('--data',            type=str, default='cna_mut_df')
 parser.add_argument('--patience',        type=int,  default=8)
+parser.add_argument('--create_split',    action='store_true', default=False)
 
 args = parser.parse_args()
 device=torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -160,16 +160,20 @@ if args.task == "survival":
 else:
 	label_col = "type"
 
+
 	
-dataset = Generic_MIL_Dataset(csv_path = csv_path,
+dataset = Generic_MIL_Dataset(csv_path = args.csv,
                                 mode = args.mode,
-                                data_dir= data_dir,
-                                mri_data_dir = mri_data_dir,
+                                path_dir= args.path_dir,
+                                mri_dir = args.mri_dir,
+                                task = args.task,
                                 shuffle = False, 
                                 seed = args.seed, 
                                 print_info = True,
+                                create_split = args.create_split,    
+                                n_splits = 5,
                                 patient_strat= False,
-                                n_bins=n_bins,
+                                n_bins=args.n_classes,
                                 label_col = label_col) 
 
 if __name__ == "__main__":

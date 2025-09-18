@@ -1,27 +1,22 @@
 from argparse import Namespace
 from collections import OrderedDict
-import os
-import pickle 
 import matplotlib.pyplot as plt
 from lifelines.utils import concordance_index
 import numpy as np
 from sksurv.metrics import concordance_index_censored
 import torch
 from dataset import save_splits
-from models.genomic_model import SNN
-from models.healnet import HealNet
-from models.transformer_fusion import TransformerFusion
-from models.DeepRisk import Res34
-from models.radiomic_model import DenseNet2D, EfficientNet2D, ResNet3D
-from models.pathomic_model import MIL_Attention_FC_surv, PorpoiseAMIL
-from models.fusion_model import PorpoiseMMF,RadiomicMMF, PathoRadioMMF, PathoRadioGenomicMMF, GGMMF
+from models.Encoder.genomic import SNN
+# from models.healnet import HealNet
+# from models.transformer_fusion import TransformerFusion
+# from models.DeepRisk import Res34
+# from models.radiomic_model import DenseNet2D, EfficientNet2D, ResNet3D
+# from models.pathomic_model import MIL_Attention_FC_surv, PorpoiseAMIL
+# from models.fusion_model import PorpoiseMMF,RadiomicMMF, PathoRadioMMF, PathoRadioGenomicMMF, GGMMF
 from utils.utils import *
 from utils.loss import NLLSurvLoss, CoxPHSurvLoss
 import sys
-import shap
-from captum.attr import IntegratedGradients
 import pandas as pd
-from models.utils import l1_reg_all
 
 
 def train(datasets: tuple, cur: int, args: Namespace):
@@ -38,69 +33,21 @@ def train(datasets: tuple, cur: int, args: Namespace):
     # if args.loss == 'cox':
     #     loss_fn = CoxPHSurvLoss()
 
-    reg_fn = l1_reg_all
+
 
 
     print('\nInit Model...', end=' ')
     args.fusion = 'trilinear2' if args.fusion == 'None' else args.fusion
 
-    if args.model_type =='omics':
+    if args.mode =='genomic':
         model_dict = {'omic_input_dim': args.omic_input_dim, 'model_size_omic': args.model_size_omic, 'n_classes': args.n_classes}
         model = SNN(**model_dict)
-    elif args.model_type =='amil_p':
-        model_dict = {'model_size_wsi': args.model_size_wsi, 'n_classes': args.n_classes}
-        model = PorpoiseAMIL(**model_dict)
-    elif args.model_type =='amil':
-        model_dict = {'omic_input_dim': args.omic_input_dim, 'fusion': args.fusion, 'model_size_wsi': args.model_size_wsi, 'n_classes': args.n_classes}
-        model = MIL_Attention_FC_surv(**model_dict)
-    elif args.model_type =='dense_mri':
-        model_dict = {'n_classes': args.n_classes}
-        model = DenseNet2D(**model_dict)
-    elif args.model_type =='efficient_mri':
-        model_dict = {'n_classes': args.n_classes}
-        model = EfficientNet2D(**model_dict)
-    elif args.model_type =='res3d':
-        model_dict = {'n_classes': args.n_classes}
-        model = ResNet3D(**model_dict)
-    elif args.model_type == 'pathomic':
-        model_dict = {'omic_input_dim': args.omic_input_dim, 'fusion': args.fusion, 'n_classes': args.n_classes, 
-        'gate_path': args.gate_path, 'gate_omic': args.gate_omic, 'scale_dim1': args.scale_dim1, 'scale_dim2': args.scale_dim2, 
-        'skip': args.skip, 'dropinput': args.dropinput, 'path_input_dim': args.path_input_dim, 'use_mlp': args.use_mlp}
-        model = PorpoiseMMF(**model_dict)
-    elif args.model_type == 'radiomic':
-        model_dict = {'omic_input_dim': args.omic_input_dim, 'fusion': args.fusion, 'n_classes': args.n_classes, 
-        'gate_path': args.gate_path, 'gate_omic': args.gate_omic, 'scale_dim1': args.scale_dim1, 'scale_dim2': args.scale_dim2, 
-        'skip': args.skip}
-        model = RadiomicMMF(**model_dict)
-    elif args.model_type == 'radiopath':
-        model_dict = {'n_classes': args.n_classes}
-        model = PathoRadioMMF(**model_dict)
-    elif args.model_type == 'radiopathomics':
-        model_dict = {'fusion': args.fusion, 'omic_input_dim': args.omic_input_dim, 'n_classes': args.n_classes, 'gate_omic': args.gate_omic, 'gate_path': args.gate_path, "gate_radio": args.gate_radio}
-        model = PathoRadioGenomicMMF(**model_dict)
-    elif args.model_type == 'ggmmf':
-        model_dict = {'fusion': args.fusion, 'omic_input_dim': args.omic_input_dim, 'n_classes': args.n_classes, 'gate_omic': args.gate_omic}
-        model = GGMMF(**model_dict)
-    elif args.model_type == 'deepr':
-        model = Res34()
-    elif args.model_type == 'healnet':
-        # model_dict = {'n_modalities': 1, 'channel_dims': [args.omic_input_dim], 'num_spatial_axes': [1], 'out_dims':4}
-        model_dict = {'n_modalities': 2, 'channel_dims': [3, args.omic_input_dim], 'num_spatial_axes': [2,1], 'out_dims':4}
-        model = HealNet(**model_dict)
-    elif args.model_type == 'transformer':
-        # model_dict = {'n_modalities': 1, 'channel_dims': [args.omic_input_dim], 'num_spatial_axes': [1], 'out_dims':4}
-        model_dict = {'omic_input_dim': args.omic_input_dim, 'n_classes': args.n_classes}
-        model = TransformerFusion(**model_dict)
-    else:
-        model_dict = {'omic_input_dim': args.omic_input_dim, 'n_classes': args.n_classes}
-        model = TransformerFusion(**model_dict)
-        raise NotImplementedError
     
-    if hasattr(model, "relocate"):
-        model.relocate()
-    else:
-        model = model.to(torch.device('cuda'))
-    print('Done!')
+    # if hasattr(model, "relocate"):
+    #     model.relocate()
+    # else:
+    #     model = model.to(torch.device('cuda'))
+    # print('Done!')
 
     print('\nInit optimizer ...', end=' ')
     optimizer = get_optim(model, args)
@@ -131,8 +78,8 @@ def train(datasets: tuple, cur: int, args: Namespace):
 
     patience = args.patience 
     for epoch in range(args.max_epochs):
-        train_loss_surv, train_loss, train_c_index = train_loop(epoch, model, train_loader, optimizer, loss_fn, 4, reg_fn)
-        val_loss_surv, val_loss, val_c_index = validate(cur, epoch, model, val_loader, loss_fn, 4,  reg_fn)
+        train_loss_surv, train_loss, train_c_index = train_loop(epoch, model, train_loader, optimizer, loss_fn, 4)
+        val_loss_surv, val_loss, val_c_index = validate(cur, epoch, model, val_loader, loss_fn, 4)
 
         train_c_indices.append(train_c_index)
         val_c_indices.append(val_c_index)
@@ -168,7 +115,7 @@ def train(datasets: tuple, cur: int, args: Namespace):
     plt.savefig(output_path, dpi=300, bbox_inches='tight')
     return model, val_c_index,val_loader,train_loader
 
-def train_loop(epoch, model, loader, optimizer, loss_fn, n_classes, writer=None, reg_fn=None, lambda_reg=0., gc=16):   
+def train_loop(epoch, model, loader, optimizer, loss_fn, n_classes, writer=None, lambda_reg=0., gc=16):   
     model.train()
     train_loss_surv, train_loss = 0., 0.
     all_risk_scores = []
@@ -231,7 +178,7 @@ def train_loop(epoch, model, loader, optimizer, loss_fn, n_classes, writer=None,
 
     return train_loss_surv, train_loss, c_index
 
-def validate(cur, epoch, model, loader, loss_fn , n_classes, early_stopping=None, monitor_cindex=None, writer=None,  reg_fn=None, lambda_reg=0., results_dir=None):
+def validate(cur, epoch, model, loader, loss_fn , n_classes, early_stopping=None, monitor_cindex=None, writer=None, lambda_reg=0., results_dir=None):
     device=torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model.eval()
     val_loss_surv, val_loss = 0., 0.

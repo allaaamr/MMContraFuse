@@ -1,24 +1,17 @@
 from __future__ import print_function, division
-import math
 import os
-import pdb
-import pickle
-import re
-import random
-import h5py
 import numpy as np
 import pandas as pd
-
+from pathlib import Path
 from sklearn.preprocessing import StandardScaler
 import nibabel as nib
 import torch
 from torch.utils.data import Dataset
 from sklearn.model_selection import train_test_split
-
-
+from utils.utils import *
 class Generic_Dataset(Dataset):
     def __init__(self,
-        csv_path = 'genoclinical.csv',
+        csv_path = 'cna_clinical.csv',
         mode = 'omic',
         shuffle = False, 
         seed = 7, 
@@ -27,7 +20,10 @@ class Generic_Dataset(Dataset):
         task: str = "subtype",        # <--  "subtype" | "risk_classification" 
         n_bins: int = 4,              # <-- used if task == "survival_binned"
         patient_strat=False,
+        create_split = False,      # change to True when new splits are needed to be created
+        n_splits = 5,
         eps=1e-6):
+
         r"""
         Generic_Dataset 
 
@@ -51,20 +47,28 @@ class Generic_Dataset(Dataset):
             task (str): Which prediction task to run ("type_classification" or "risk_classification").
             n_bins (int): Number of bins if discretizing survival times into risk categories.
             patient_strat (bool): Whether to stratify at patient level.
+            create_split (bool): Create a new set of splits based on csv file provided (overrides existing splits)
+            n_splits (int)
             eps (float): Small constant for bin edges in survival binning.
         """
+        print("[BASE] entering Generic_Dataset.__init__", __file__, flush=True)
+
         self.custom_test_ids = None
         self.seed = seed
         self.print_info = print_info
         self.patient_strat = patient_strat
         self.train_ids, self.val_ids, self.test_ids  = (None, None, None)
-        self.data_dir = None
-        self.mri_data_dir = None
+        self.path_dir = None
+        self.mri_dir = None
         self.task=task
-
+        self.create_split = create_split
+        self.n_splits = n_splits
 
         # ---- load CSV ----
         slide_data = pd.read_csv(csv_path, low_memory=False)
+        self.slide_data =slide_data
+        slide_data = slide_data.dropna(subset=["survival", "censorship"]).copy()
+
         label_col = 'survival'
 
         # optional shuffle
@@ -75,8 +79,7 @@ class Generic_Dataset(Dataset):
         # ----------------------
         # CASE 1: Type classification (categorical label e.g. tumor type) (2 Type Classification)
         # ----------------------
-        if self.task == "type_classification":
-            
+        if self.task == "type":        
             # build dictionary: patient_id -> all slide_ids (because a single patient can have multiple slides)
             patient_dict = {}
             slide_data = slide_data.set_index('case_id')
@@ -119,7 +122,7 @@ class Generic_Dataset(Dataset):
         # CASE 2: Risk classification (bin survival times into 4 discrete risk groups) (4 Group Classification)
         # ----------------------
 
-        if self.task =="risk_classification":    
+        if self.task =="risk":    
             # one patient = one unique row
             patients_df = slide_data.drop_duplicates(['case_id']).copy()
              # only use uncensored patients to define survival quantiles (same methodology as in literature)
@@ -185,17 +188,19 @@ class Generic_Dataset(Dataset):
             self.slide_data = slide_data
 
                         # metadata columns (first 12 cols, usually non-feature data)
-            metadata = [
-                'disc_label', 'Unnamed: 0', 'case_id', 'label', 'slide_id',
-                'type', 'age', 'gender', 'survival', 'censorship', 'Unnamed: 0.1'
-            ]
 
          # ---- store final dataframes ----
-        self.metadata = slide_data.columns[:12]
+        metadata = [
+                'disc_label', 'Unnamed: 0', 'case_id', 'label', 'slide_id',
+                'type', 'age', 'gender', 'survival', 'censorship', "PatientID"
+            ]
+        self.metadata = metadata
         self.genomic_features = self.slide_data.drop(self.metadata, axis=1)
         self.mode = mode
         self.cls_ids_prep()
         self.patient_data_prep()
+        if self.create_split:
+            self.create_splits(n_splits)
 
     def cls_ids_prep(self):
         r"""
@@ -236,6 +241,19 @@ class Generic_Dataset(Dataset):
             print('Patient-LVL; Number of samples registered in class %d: %d' % (i, self.patient_cls_ids[i].shape[0]))
             print('Slide-LVL; Number of samples registered in class %d: %d' % (i, self.slide_cls_ids[i].shape[0]))
 
+    def create_splits(self, n_splits = 3, val_percent=0.2):
+        settings = {
+                    'n_splits' : n_splits, 
+                    'seed': self.seed
+                    }
+
+
+        settings.update({'cls_ids' : self.patient_cls_ids, 'samples': len(self.patient_data['case_id'])})
+
+        split_iter = generate_stratified_kfold(**settings)
+        save_splits(split_iter,  case_id_array=self.patient_data['case_id'])
+
+
     def return_splits(self, csv_path):
         """
         Returns:
@@ -275,10 +293,10 @@ class Generic_Dataset(Dataset):
         return None
 
 class Generic_MIL_Dataset(Generic_Dataset):
-    def __init__(self, data_dir, mri_data_dir,mode: str='omic', **kwargs):
+    def __init__(self, path_dir, mri_dir,mode: str='omic', **kwargs):
         super(Generic_MIL_Dataset, self).__init__(**kwargs)
-        self.data_dir = data_dir
-        self.mri_data_dir = mri_data_dir
+        self.data_dir = path_dir
+        self.mri_data_dir = mri_dir
         self.mode = mode
         self.use_h5 = False
         self.genomic_features = self.slide_data.drop(self.metadata, axis=1)
@@ -431,19 +449,6 @@ class Generic_MIL_Dataset(Generic_Dataset):
 
                     return (mri_tensors, path_features, genomic_features.unsqueeze(dim=0), label, event_time, c, slide_ids) 
                 
-def save_splits(split_datasets, column_keys, filename, boolean_style=False):
-	splits = [split_datasets[i].slide_data['slide_id'] for i in range(len(split_datasets))]
-	if not boolean_style:
-		df = pd.concat(splits, ignore_index=True, axis=1)
-		df.columns = column_keys
-	else:
-		df = pd.concat(splits, ignore_index = True, axis=0)
-		index = df.values.tolist()
-		one_hot = np.eye(len(split_datasets)).astype(bool)
-		bool_array = np.repeat(one_hot, [len(dset) for dset in split_datasets], axis=0)
-		df = pd.DataFrame(bool_array, index=index, columns = ['train', 'val', 'test'])
-
-	df.to_csv(filename)
 
 class Generic_Split(Generic_MIL_Dataset):
     def __init__(self, slide_data, metadata, mode, mri_data_dir,
@@ -475,3 +480,20 @@ class Generic_Split(Generic_MIL_Dataset):
         transformed = pd.DataFrame(scalers[0].transform(self.genomic_features))
         transformed.columns = self.genomic_features.columns
         self.genomic_features = transformed
+
+
+def save_splits( split_iter, case_id_array, out_dir="data/splits"):
+    """
+    Save splits as case_id instead of numeric indices.
+    `case_id_array` must be aligned with the indices used in cls_ids.
+    """
+    out = Path(out_dir)
+    out.mkdir(parents=True, exist_ok=True)
+    case_id_array = np.asarray(case_id_array)
+
+    for i, (train_idx, val_idx) in enumerate(split_iter):
+        train_ids = case_id_array[train_idx]
+        val_ids   = case_id_array[val_idx]
+        df = pd.DataFrame({"train": pd.Series(train_ids, dtype="string")})
+        df["val"] = pd.Series(val_ids, dtype="string")  # pads shorter col with NA
+        df.to_csv(out / f"split_{i}.csv", index=False)
