@@ -28,7 +28,7 @@ def get_split_loader(split_dataset, training = False, testing = False, weighted 
     """
         return either the validation loader or training loader 
     """
-    collate = collate_MIL_survival
+    collate = collate_MIL
     kwargs = {}
     if not testing:
         if training:
@@ -80,7 +80,7 @@ def initialize_weights(module):
             nn.init.constant_(m.weight, 1)
             nn.init.constant_(m.bias, 0)
 
-def collate_MIL_survival(batch):
+def collate_MIL(batch):
     mri = torch.cat([item[0] for item in batch], dim=0).type(torch.FloatTensor)
     img = torch.cat([item[1] for item in batch], dim = 0)
     omic = torch.cat([item[2] for item in batch], dim = 0).type(torch.FloatTensor)

@@ -9,6 +9,7 @@ import torch
 from torch.utils.data import Dataset
 from sklearn.model_selection import train_test_split
 from utils.utils import *
+
 class Generic_Dataset(Dataset):
     def __init__(self,
         csv_path = 'cna_clinical.csv',
@@ -17,7 +18,7 @@ class Generic_Dataset(Dataset):
         seed = 7, 
         print_info = True,
         label_col: str = "survival",  # <--  "type" or "survival"
-        task: str = "subtype",        # <--  "subtype" | "risk_classification" 
+        task: str = "subtype",        # <--  "subtype" | "risk" 
         n_bins: int = 4,              # <-- used if task == "survival_binned"
         patient_strat=False,
         create_split = False,      # change to True when new splits are needed to be created
@@ -63,14 +64,13 @@ class Generic_Dataset(Dataset):
         self.task=task
         self.create_split = create_split
         self.n_splits = n_splits
-
+        self.label_col = label_col
         # ---- load CSV ----
         slide_data = pd.read_csv(csv_path, low_memory=False)
         self.slide_data =slide_data
         slide_data = slide_data.dropna(subset=["survival", "censorship"]).copy()
 
-        label_col = 'survival'
-
+        
         # optional shuffle
         if shuffle:
             np.random.seed(seed)
@@ -79,7 +79,12 @@ class Generic_Dataset(Dataset):
         # ----------------------
         # CASE 1: Type classification (categorical label e.g. tumor type) (2 Type Classification)
         # ----------------------
-        if self.task == "type":        
+
+        if self.task == "subtype":    
+            
+            patients_df = slide_data.drop_duplicates(['case_id']).copy()
+            patients_df['label'] = patients_df.type
+
             # build dictionary: patient_id -> all slide_ids (because a single patient can have multiple slides)
             patient_dict = {}
             slide_data = slide_data.set_index('case_id')
@@ -104,18 +109,17 @@ class Generic_Dataset(Dataset):
             self.num_classes=2 # LGG / GBM (types of brain cancer)
 
             # patient-level view (case_id + label)
-            patients_df = slide_data.drop_duplicates(['case_id'])
             self.patient_data = {'case_id':patients_df['case_id'].values, 'label':patients_df['label'].values}
     
             # reorder columns for consistency
-            new_cols = list(slide_data.columns[-1:]) + list(slide_data.columns[:-1])  ### PORPOISE
+            new_cols = list(slide_data.columns[-1:]) + list(slide_data.columns[:-1]) 
             slide_data = slide_data[new_cols]
             self.slide_data = slide_data
-
+    
                         # metadata columns (first 12 cols, usually non-feature data)
             metadata = [
-                'disc_label', 'Unnamed: 0', 'case_id', 'label', 'slide_id',
-                'type', 'age', 'gender', 'survival', 'censorship', 'Unnamed: 0.1'
+                'Unnamed: 0', 'case_id', 'label', 'slide_id',
+                'type', 'age', 'gender', 'survival', 'censorship', 'PatientID'
             ]
 
         # ----------------------
@@ -188,12 +192,12 @@ class Generic_Dataset(Dataset):
             self.slide_data = slide_data
 
                         # metadata columns (first 12 cols, usually non-feature data)
-
+            metadata = [
+                    'disc_label', 'Unnamed: 0', 'case_id', 'label', 'slide_id',
+                    'type', 'age', 'gender', 'survival', 'censorship', "PatientID"
+                ]
          # ---- store final dataframes ----
-        metadata = [
-                'disc_label', 'Unnamed: 0', 'case_id', 'label', 'slide_id',
-                'type', 'age', 'gender', 'survival', 'censorship', "PatientID"
-            ]
+
         self.metadata = metadata
         self.genomic_features = self.slide_data.drop(self.metadata, axis=1)
         self.mode = mode
@@ -270,8 +274,8 @@ class Generic_Dataset(Dataset):
         df_val_slice = self.slide_data[mask].reset_index(drop=True)
         print('df_val_slice ' ,df_val_slice.shape)
 
-        train = Generic_Split(df_train_slice, metadata=self.metadata, mode=self.mode, mri_data_dir = self.mri_data_dir, data_dir=self.data_dir, label_col='survival', patient_dict=self.patient_dict, num_classes=self.num_classes)
-        val = Generic_Split(df_val_slice, metadata=self.metadata, mode=self.mode, mri_data_dir = self.mri_data_dir,  data_dir=self.data_dir, label_col='survival', patient_dict=self.patient_dict, num_classes=self.num_classes)
+        train = Generic_Split(df_train_slice, metadata=self.metadata, mode=self.mode, mri_data_dir = self.mri_data_dir, data_dir=self.data_dir, label_col=self.label_col, patient_dict=self.patient_dict, num_classes=self.num_classes)
+        val = Generic_Split(df_val_slice, metadata=self.metadata, mode=self.mode, mri_data_dir = self.mri_data_dir,  data_dir=self.data_dir, label_col=self.label_col, patient_dict=self.patient_dict, num_classes=self.num_classes)
 
         print("****** Normalizing Data ******")
         scalers = train.get_scaler()
@@ -302,6 +306,7 @@ class Generic_MIL_Dataset(Generic_Dataset):
         self.genomic_features = self.slide_data.drop(self.metadata, axis=1)
         print('Mode is ', self.mode)
         print(self.genomic_features.shape)
+    
 
         r"""
         Inherits from the base.
@@ -360,9 +365,13 @@ class Generic_MIL_Dataset(Generic_Dataset):
 
     def __getitem__(self, idx):
         case_id = self.slide_data['case_id'][idx]
-        label = torch.Tensor([self.slide_data['disc_label'][idx]])
         event_time = torch.Tensor([self.slide_data[self.label_col][idx]])
-        c = torch.Tensor([self.slide_data['censorship'][idx]])
+        if self.label_col == "survival":
+            label = torch.Tensor([self.slide_data['disc_label'][idx]])
+            c = torch.Tensor([self.slide_data['censorship'][idx]])
+        else:
+            label = self.slide_data['label'][idx]
+            c= torch.Tensor(1)
         slide_ids = self.patient_dict[case_id]
 
 
@@ -449,7 +458,6 @@ class Generic_MIL_Dataset(Generic_Dataset):
 
                     return (mri_tensors, path_features, genomic_features.unsqueeze(dim=0), label, event_time, c, slide_ids) 
                 
-
 class Generic_Split(Generic_MIL_Dataset):
     def __init__(self, slide_data, metadata, mode, mri_data_dir,
         signatures=None, data_dir=None, label_col=None, patient_dict=None, num_classes=2):
@@ -480,7 +488,6 @@ class Generic_Split(Generic_MIL_Dataset):
         transformed = pd.DataFrame(scalers[0].transform(self.genomic_features))
         transformed.columns = self.genomic_features.columns
         self.genomic_features = transformed
-
 
 def save_splits( split_iter, case_id_array, out_dir="data/splits"):
     """

@@ -19,203 +19,223 @@ import sys
 import pandas as pd
 
 
-def train(datasets: tuple, cur: int, args: Namespace):
-
+def train(datasets: tuple, cur: int, args):
     print('\nInit train/val/test splits...', end=' ')
     train_split, val_split = datasets
-    # save_splits(datasets, ['train', 'val'], os.path.join(args.results_dir, 'splits_{}.csv'.format(cur)))
-    print("Training on {} samples".format(len(train_split)))
-    print("Validating on {} samples".format(len(val_split)))
+    print(f"Training on {len(train_split)} samples")
+    print(f"Validating on {len(val_split)} samples")
 
     print('\nInit loss function...', end=' ')
-    if args.loss == 'nll':
+    if args.task == 'risk':
         loss_fn = NLLSurvLoss(alpha=args.alpha_surv)
-    # if args.loss == 'cox':
-    #     loss_fn = CoxPHSurvLoss()
-
-
-
+        metric_name = "c-index"
+    elif args.task == 'subtype':
+        loss_fn = nn.CrossEntropyLoss()
+        metric_name = "accuracy"
+    else:
+        raise ValueError(f"Unknown task: {args.task}")
 
     print('\nInit Model...', end=' ')
-    args.fusion = 'trilinear2' if args.fusion == 'None' else args.fusion
-
-    if args.mode =='genomic':
-        model_dict = {'omic_input_dim': args.omic_input_dim, 'model_size_omic': args.model_size_omic, 'n_classes': args.n_classes}
+    if args.mode == 'genomic':
+        model_dict = {
+            'omic_input_dim': args.omic_input_dim,
+            'model_size_omic': args.model_size_omic,
+            'n_classes': args.n_classes
+        }
         model = SNN(**model_dict)
-    
-    # if hasattr(model, "relocate"):
-    #     model.relocate()
-    # else:
-    #     model = model.to(torch.device('cuda'))
-    # print('Done!')
 
     print('\nInit optimizer ...', end=' ')
     optimizer = get_optim(model, args)
     print('Done!')
     
     print('\nInit Loaders...', end=' ')
-    train_loader = get_split_loader(train_split, training=True, 
-        weighted = args.weighted_sample, mode=args.mode, batch_size=args.batch_size)
-    val_loader = get_split_loader(val_split,  mode=args.mode, batch_size=args.batch_size)
+    train_loader = get_split_loader(train_split, training=True,
+                                    weighted=args.weighted_sample,
+                                    mode=args.mode, batch_size=args.batch_size)
+    val_loader   = get_split_loader(val_split, mode=args.mode, batch_size=args.batch_size)
     print('Done!')
     sys.stdout.flush()
-    # print('\nSetup EarlyStopping...', end=' ')
-    # if args.early_stopping:
-    #     early_stopping = EarlyStopping(warmup=0, patience=10, stop_epoch=20, verbose = True)
-    # else:
-    #     early_stopping = None
 
-    # print('\nSetup Validation C-Index Monitor...', end=' ')
-    # monitor_cindex = Monitor_CIndex()
-    print('Done!')
-    best_val_cindex = -float('inf')  # Initialize to a very low value for c-index
+    best_val_metric = -float('inf') if args.task == 'risk' else 0.0
     patience_counter = 0
-    train_c_indices = []
-    val_c_indices = []
-    train_losses = []
-    val_losses = []
+    patience = args.patience
 
+    train_metrics, val_metrics = [], []
+    train_losses,  val_losses  = [],  []
 
-    patience = args.patience 
     for epoch in range(args.max_epochs):
-        train_loss_surv, train_loss, train_c_index = train_loop(epoch, model, train_loader, optimizer, loss_fn, 4)
-        val_loss_surv, val_loss, val_c_index = validate(cur, epoch, model, val_loader, loss_fn, 4)
+        tr_loss_main, tr_loss_total, tr_metric = train_loop(
+            epoch, model, train_loader, optimizer, loss_fn, args
+        )
+        va_loss_main, va_loss_total, va_metric = validate(
+            cur, epoch, model, val_loader, loss_fn, args
+        )
 
-        train_c_indices.append(train_c_index)
-        val_c_indices.append(val_c_index)
-        train_losses.append(train_loss)
-        val_losses.append(val_loss)
+        train_metrics.append(tr_metric)
+        val_metrics.append(va_metric)
+        train_losses.append(tr_loss_total)
+        val_losses.append(va_loss_total)
 
+        # simple early-stopping by the task metric
+        improved = va_metric > best_val_metric
+        if improved:
+            best_val_metric = va_metric
+            patience_counter = 0
+        else:
+            patience_counter += 1
+        if patience and patience_counter >= patience:
+            print(f"Early stop at epoch {epoch} (best {metric_name}: {best_val_metric:.4f})")
+            break
 
-    print('Val c-Index: {:.4f}'.format(val_c_index))
+    print(f'Val {metric_name}: {best_val_metric:.4f}')
 
-    # Plot the results
-    epochs = range(1, len(train_c_indices) + 1)
+    # --- Plots ---
+    epochs = range(1, len(train_metrics) + 1)
     plt.figure(figsize=(10, 6))
-    plt.plot(epochs, train_c_indices, label='Train c-index')
-    plt.plot(epochs, val_c_indices, label='Validation c-index')
-    plt.xlabel('Epochs')
-    plt.ylabel('c-index')
-    plt.title('Train vs Validation c-index Over Epochs')
+    plt.plot(epochs, train_metrics, label=f'Train {metric_name}')
+    plt.plot(epochs, val_metrics,   label=f'Validation {metric_name}')
+    plt.xlabel('Epochs'); plt.ylabel(metric_name); plt.title(f'Train vs Validation {metric_name}')
     plt.legend()
-
-    output_path = f"cindex_plot_{cur}_transformer_d3.png"  # Specify the path and filename
-    plt.savefig(output_path, dpi=300, bbox_inches='tight')
+    plt.savefig(f"{metric_name}_plot_{cur}.png", dpi=300, bbox_inches='tight')
 
     epochs = range(1, len(train_losses) + 1)
     plt.figure(figsize=(10, 6))
     plt.plot(epochs, train_losses, label='Train Loss')
-    plt.plot(epochs, val_losses, label='Validation Loss')
-    plt.xlabel('Epochs')
-    plt.ylabel('Loss')
-    plt.title('Train vs Validation Loss Over Epochs')
+    plt.plot(epochs, val_losses,   label='Validation Loss')
+    plt.xlabel('Epochs'); plt.ylabel('Loss'); plt.title('Train vs Validation Loss')
     plt.legend()
+    plt.savefig(f"loss_plot_{cur}.png", dpi=300, bbox_inches='tight')
 
-    output_path = f"loss_plot_{cur}_transformer_d3.png"  # Specify the path and filename
-    plt.savefig(output_path, dpi=300, bbox_inches='tight')
-    return model, val_c_index,val_loader,train_loader
+    return model, best_val_metric, val_loader, train_loader
 
-def train_loop(epoch, model, loader, optimizer, loss_fn, n_classes, writer=None, lambda_reg=0., gc=16):   
+# --------------------
+# TRAIN LOOP 
+# --------------------
+def train_loop(epoch, model, loader, optimizer, loss_fn, args, gc=16):
     model.train()
-    train_loss_surv, train_loss = 0., 0.
-    all_risk_scores = []
-    all_censorships = []
-    all_event_times = []
-    
+    loss_main_sum, loss_total_sum = 0.0, 0.0
+
+    # Survival accumulators
+    surv_scores, surv_censors, surv_times = [], [], []
+    # Classification accumulators
+    cls_logits, cls_targets = [], []
 
     for batch_idx, batch in enumerate(loader):
         data_MRI, data_WSI, data_omic, y_disc, event_time, censor, slide_ids = batch
-        #pdb.set_trace() 
-        h = model(x_path=data_WSI, x_omic=data_omic, x_mri =data_MRI) # return hazards, S, Y_hat, A_raw, results_dict
 
-        loss = loss_fn(h=h, y=y_disc, t=event_time, c=censor)
-        loss_value = loss.item()
+        # Forward
+        h = model(x_path=data_WSI, x_omic=data_omic, x_mri=data_MRI)
 
-        loss_reg = 0
+        # Loss by task
+        if isinstance(loss_fn, NLLSurvLoss):  # risk / survival
+            loss = loss_fn(h=h, y=y_disc, t=event_time, c=censor)
+        else:  # classification
+            loss = loss_fn(h, y_disc.long())
 
+        loss_value = float(loss.detach().cpu())
+        loss_reg = 0.0  # hook if you add regularization
 
+        # --- Metric accumulators ---
         if isinstance(loss_fn, NLLSurvLoss):
-            hazards = torch.sigmoid(h)
+            hazards  = torch.sigmoid(h)
             survival = torch.cumprod(1 - hazards, dim=1)
-            risk = -torch.sum(survival, dim=1).detach().cpu().numpy()
+            risk     = -torch.sum(survival, dim=1).detach().cpu().numpy()  # higher risk = earlier event
+            surv_scores.append(risk)
+            surv_censors.append(censor.detach().cpu().numpy())
+            surv_times.append(event_time.detach().cpu().numpy())
         else:
-            risk = h.detach().cpu().numpy().squeeze()
+            cls_logits.append(h.detach().cpu())
+            cls_targets.append(y_disc.detach().cpu())
 
-        all_risk_scores.append(risk)
-        all_censorships.append(censor.detach().cpu().numpy())
-        all_event_times.append(event_time.detach().cpu().numpy())
-        #pdb.set_trace()
-        train_loss_surv += loss_value
-        train_loss += loss_value + loss_reg
+        # Bookkeeping
+        loss_main_sum  += loss_value
+        loss_total_sum += loss_value + loss_reg
 
-        if y_disc.shape[0] == 1 and (batch_idx + 1) % 100 == 0:
-            print('batch {}, loss: {:.4f}, label: {}, event_time: {:.4f}, risk: {:.4f}, bag_size: {}'.format(batch_idx, loss_value + loss_reg, y_disc.detach().cpu().item(), float(event_time.detach().cpu().item()), float(risk), data_WSI.size(0)))
-        elif y_disc.shape[0] != 1 and (batch_idx + 1) % 5 == 0:
-            print('batch {}, loss: {:.4f}, label: {}, event_time: {:.4f}, risk: {:.4f}, bag_size: {}'.format(batch_idx, loss_value + loss_reg, y_disc.detach().cpu()[0], float(event_time.detach().cpu()[0]), float(risk[0]), data_WSI.size(0)))
-        sys.stdout.flush()
-        # backward pass
-        loss = loss / gc + loss_reg
-        loss.backward()
-
-        if (batch_idx + 1) % gc == 0: 
+        # Backward / grad accumulation
+        (loss / gc + loss_reg).backward()
+        if (batch_idx + 1) % gc == 0:
             optimizer.step()
             optimizer.zero_grad()
 
-    # calculate loss and error for epoch
-    train_loss_surv /= len(loader)
-    train_loss /= len(loader)
-    #pdb.set_trace()
+        if (batch_idx + 1) % 50 == 0:
+            sys.stdout.flush()
 
-    all_risk_scores = np.concatenate(all_risk_scores)
-    all_censorships = np.concatenate(all_censorships)
-    all_event_times = np.concatenate(all_event_times)
+    # Epoch metrics
+    loss_main = loss_main_sum / len(loader)
+    loss_total = loss_total_sum / len(loader)
 
-    # c_index = concordance_index(all_event_times, all_risk_scores, event_observed=1-all_censorships) 
-    c_index = concordance_index_censored((1-all_censorships).astype(bool), all_event_times, all_risk_scores, tied_tol=1e-08)[0]
+    if isinstance(loss_fn, NLLSurvLoss):
+        scores  = np.concatenate(surv_scores, axis=0)
+        censors = np.concatenate(surv_censors, axis=0)
+        times   = np.concatenate(surv_times, axis=0)
+        c_index = concordance_index_censored((1 - censors).astype(bool), times, scores, tied_tol=1e-8)[0]
+        metric  = float(c_index)
+        print(f'Epoch {epoch}: train_surv_loss={loss_main:.4f}, train_loss={loss_total:.4f}, train_c-index={metric:.4f}')
+    else:
+        logits = torch.cat(cls_logits, dim=0)
+        targets = torch.cat(cls_targets, dim=0)
+        preds = torch.argmax(logits, dim=1)
+        acc = (preds == targets).float().mean().item()
+        metric = acc
+        print(f'Epoch {epoch}: train_ce_loss={loss_main:.4f}, train_loss={loss_total:.4f}, train_acc={metric:.4f}')
 
-    print('Epoch: {}, train_loss_surv: {:.4f}, train_loss: {:.4f}, train_c_index: {:.4f}'.format(epoch, train_loss_surv, train_loss, c_index))
     sys.stdout.flush()
+    return loss_main, loss_total, metric
 
-    return train_loss_surv, train_loss, c_index
-
-def validate(cur, epoch, model, loader, loss_fn , n_classes, early_stopping=None, monitor_cindex=None, writer=None, lambda_reg=0., results_dir=None):
-    device=torch.device("cuda" if torch.cuda.is_available() else "cpu")
+# --------------------
+# VALIDATE 
+# --------------------
+@torch.no_grad()
+def validate(cur, epoch, model, loader, loss_fn, args, gc=16):
     model.eval()
-    val_loss_surv, val_loss = 0., 0.
-    all_risk_scores = np.zeros((len(loader)))
-    all_censorships = np.zeros((len(loader)))
-    all_event_times = np.zeros((len(loader)))
+    loss_main_sum, loss_total_sum = 0.0, 0.0
+
+    surv_scores, surv_censors, surv_times = [], [], []
+    cls_logits, cls_targets = [], []
 
     for batch_idx, (data_MRI, data_WSI, data_omic, y_disc, event_time, censor, slide_ids) in enumerate(loader):
-        with torch.no_grad():
-        
-            h = model(x_path=data_WSI, x_omic=data_omic, x_mri =data_MRI) # return hazards, S, Y_hat, A_raw, results_dict
-
-        loss = loss_fn(h=h, y=y_disc, t=event_time, c=censor)
-        loss_value = loss.item()
-
- 
-        loss_reg = 0
+        h = model(x_path=data_WSI, x_omic=data_omic, x_mri=data_MRI)
 
         if isinstance(loss_fn, NLLSurvLoss):
-            hazards = torch.sigmoid(h)
-            survival = torch.cumprod(1 - hazards, dim=1)
-            risk = -torch.sum(survival, dim=1).detach().cpu().numpy()
+            loss = loss_fn(h=h, y=y_disc, t=event_time, c=censor)
         else:
-            risk = h.detach().cpu().numpy()
+            loss = loss_fn(h, y_disc.long())
 
-        all_risk_scores[batch_idx] = risk
-        all_censorships[batch_idx] = censor.detach().cpu().numpy()
-        all_event_times[batch_idx] = event_time.detach().cpu().numpy()
+        loss_value = float(loss.detach().cpu())
+        loss_reg = 0.0
 
-        val_loss_surv += loss_value
-        val_loss += loss_value + loss_reg
+        if isinstance(loss_fn, NLLSurvLoss):
+            hazards  = torch.sigmoid(h)
+            survival = torch.cumprod(1 - hazards, dim=1)
+            risk     = -torch.sum(survival, dim=1).detach().cpu().numpy()
+            surv_scores.append(risk)
+            surv_censors.append(censor.detach().cpu().numpy())
+            surv_times.append(event_time.detach().cpu().numpy())
+        else:
+            cls_logits.append(h.detach().cpu())
+            cls_targets.append(y_disc.detach().cpu())
 
-    val_loss_surv /= len(loader)
-    val_loss /= len(loader)
-    c_index = concordance_index_censored((1-all_censorships).astype(bool), all_event_times, all_risk_scores, tied_tol=1e-08)[0]
+        loss_main_sum  += loss_value
+        loss_total_sum += loss_value + loss_reg
 
+    loss_main = loss_main_sum / len(loader)
+    loss_total = loss_total_sum / len(loader)
 
-    print('val_loss_surv: {:.4f}, val_loss: {:.4f}, val_c_index: {:.4f}'.format(val_loss_surv, val_loss, c_index))
+    if isinstance(loss_fn, NLLSurvLoss):
+        scores  = np.concatenate(surv_scores, axis=0)
+        censors = np.concatenate(surv_censors, axis=0)
+        times   = np.concatenate(surv_times, axis=0)
+        c_index = concordance_index_censored((1 - censors).astype(bool), times, scores, tied_tol=1e-8)[0]
+        metric  = float(c_index)
+        print(f'val_surv_loss: {loss_main:.4f}, val_loss: {loss_total:.4f}, val_c-index: {metric:.4f}')
+    else:
+        logits = torch.cat(cls_logits, dim=0)
+        targets = torch.cat(cls_targets, dim=0)
+        preds = torch.argmax(logits, dim=1)
+        acc = (preds == targets).float().mean().item()
+        metric = acc
+        print(f'val_ce_loss: {loss_main:.4f}, val_loss: {loss_total:.4f}, val_acc: {metric:.4f}')
+
     sys.stdout.flush()
-    return val_loss_surv, val_loss, c_index
+    return loss_main, loss_total, metric
+

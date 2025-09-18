@@ -38,7 +38,6 @@ class NLLSurvLoss(nn.Module):
                         alpha=self.alpha, eps=self.eps,
                         reduction=self.reduction)
 
-
 # TODO: document better and clean up
 def nll_loss(h, y, c, alpha=0.2, eps=1e-7, reduction='mean'):
     """
@@ -114,7 +113,6 @@ def nll_loss(h, y, c, alpha=0.2, eps=1e-7, reduction='mean'):
 
 
     return loss
-
 
 
 class CoxPHSurvLoss(nn.Module):
