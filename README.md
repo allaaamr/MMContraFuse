@@ -14,7 +14,7 @@
   --strict
 
 3. Run Model
-   python main.py
-   --mode [options: genomics, radio_1D, radio_2.5D, radio_3D, radiogeomics_1D, ..etc.]
-   --task [type , risk ]
+   python main.py \
+   --mode [options: genomics, radio_1D, radio_2.5D, radio_3D, radiogeomics_1D, ..etc.] \
+   --task [type , risk ] \
    --create_splits 
