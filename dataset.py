@@ -417,11 +417,11 @@ class Generic_MIL_Dataset(Generic_Dataset):
                     T2 = self.load_mri_3D(case_id, 'T2')
                     FLAIR = self.load_mri_3D(case_id, 'Flair')
                     T1c = self.load_mri_3D(case_id, 'T1c')
-                    mask = self.load_mri_3D(case_id, 'mask')
+                    # mask = self.load_mri_3D(case_id, 'mask')
                     # Stack MRI images as channels
                     # mri_tensors = torch.stack([ T2, FLAIR], dim=0)
                     # mri_tensors = torch.stack([T1c, T2, FLAIR], dim=0)
-                    mri_tensors = torch.stack([FLAIR, mask, T1, T1c, T2], dim=0)
+                    mri_tensors = torch.stack([FLAIR, T1, T1c, T2], dim=0)
                     mri_tensors = mri_tensors.unsqueeze(0)
 
                     if idx == 0:
