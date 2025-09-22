@@ -203,8 +203,8 @@ class Generic_Dataset(Dataset):
         self.mode = mode
         self.cls_ids_prep()
         self.patient_data_prep()
-        if self.create_split:
-            self.create_splits(n_splits)
+        # if self.create_split:
+        #     self.create_splits(n_splits)
 
     def cls_ids_prep(self):
         r"""
@@ -315,6 +315,26 @@ class Generic_MIL_Dataset(Generic_Dataset):
         self.genomic_features = self.slide_data.drop(self.metadata, axis=1)
         print('Mode is ', self.mode)
         print(self.genomic_features.shape)
+
+        # --- filter slide_data to cases that actually have an MRI folder ---
+        if self.mode in ['radio_3D', 'radiopath', 'radiopathomics', 'radiomic3D']:
+            keep_mask = self.slide_data['case_id'].apply(
+                lambda cid: os.path.isdir(os.path.join(self.mri_data_dir, str(cid)))
+            )
+            dropped = int((~keep_mask).sum())
+            if dropped > 0:
+                print(f"[Filter] Dropping {dropped} cases without MRI dir in {self.mri_data_dir}")
+
+            self.slide_data = self.slide_data.loc[keep_mask].reset_index(drop=True)
+
+            # after filtering, rebuild derived structures
+            self.genomic_features = self.slide_data.drop(self.metadata, axis=1)
+            self.patient_data_prep()
+            self.cls_ids_prep()
+
+        # --- now create splits ---
+        if self.create_split:
+            self.create_splits(self.n_splits)
     
 
         r"""
