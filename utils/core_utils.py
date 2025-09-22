@@ -18,6 +18,30 @@ from utils.loss import NLLSurvLoss, CoxPHSurvLoss
 import sys
 import pandas as pd
 
+import torchvision.models.video as vmodels
+import torch.nn as nn
+
+import wandb
+
+
+class MRI3DHead(nn.Module):
+    def __init__(self, in_ch: int, task: str, n_bins_or_classes: int):
+        super().__init__()
+        m = vmodels.r3d_18(weights=None)  # or weights="R3D_18_Weights.KINETICS400_V1" and adapt first conv
+        # adapt first conv to match MRI channels (e.g., 2 or 4)
+        m.stem[0] = nn.Conv3d(in_ch, 64, kernel_size=(3,7,7), stride=(1,2,2), padding=(1,3,3), bias=False)
+        feat_dim = m.fc.in_features
+        m.fc = nn.Identity()
+        self.backbone = m
+        # task head: for risk (discrete-time) output n_bins hazards; for subtype output class logits
+        self.head = nn.Linear(feat_dim, n_bins_or_classes)
+        self.task = task
+
+    def forward(self, x_mri=None, x_path=None, x_omic=None, **kwargs):
+        # expect x_mri shape: (N, C, D/T, H, W)
+        z = self.backbone(x_mri)
+        out = self.head(z)
+        return out  # risk: hazard logits per bin; subtype: class logits
 
 def train(datasets: tuple, cur: int, args):
     print('\nInit train/val/test splits...', end=' ')
@@ -43,6 +67,15 @@ def train(datasets: tuple, cur: int, args):
             'n_classes': args.n_classes
         }
         model = SNN(**model_dict)
+    elif args.mode == 'radio_3D':
+        # infer MRI channel count from one batch (or set explicitly if you prefer)
+        tmp_loader = get_split_loader(train_split, training=False, weighted=False, mode=args.mode, batch_size=1)
+        with torch.no_grad():
+            sample = next(iter(tmp_loader))
+            x_mri = sample[0]  # (N, C, D, H, W)
+            in_ch = x_mri.size(1)
+        n_out = args.n_classes  # risk: #bins ; subtype: #classes
+        model = MRI3DHead(in_ch=in_ch, task=args.task, n_bins_or_classes=n_out)
 
     print('\nInit optimizer ...', end=' ')
     optimizer = get_optim(model, args)
@@ -63,6 +96,12 @@ def train(datasets: tuple, cur: int, args):
     train_metrics, val_metrics = [], []
     train_losses,  val_losses  = [],  []
 
+    wandb.init(
+        project="multimodal-survival",   # change to your wandb project name
+        name=f"fold_{cur}_{args.mode}_{args.task}",
+        config=vars(args)
+    )
+
     for epoch in range(args.max_epochs):
         tr_loss_main, tr_loss_total, tr_metric = train_loop(
             epoch, model, train_loader, optimizer, loss_fn, args
@@ -70,6 +109,17 @@ def train(datasets: tuple, cur: int, args):
         va_loss_main, va_loss_total, va_metric = validate(
             cur, epoch, model, val_loader, loss_fn, args
         )
+
+        wandb.log({
+            "epoch": epoch,
+            "train_loss_main": tr_loss_main,
+            "train_loss_total": tr_loss_total,
+            f"train_{metric_name}": tr_metric,
+            "val_loss_main": va_loss_main,
+            "val_loss_total": va_loss_total,
+            f"val_{metric_name}": va_metric,
+            "fold": cur
+        })
 
         train_metrics.append(tr_metric)
         val_metrics.append(va_metric)
@@ -105,6 +155,9 @@ def train(datasets: tuple, cur: int, args):
     plt.xlabel('Epochs'); plt.ylabel('Loss'); plt.title('Train vs Validation Loss')
     plt.legend()
     plt.savefig(f"loss_plot_{cur}.png", dpi=300, bbox_inches='tight')
+
+    wandb.log({f"best_val_{metric_name}": best_val_metric, "fold": cur})
+    wandb.finish()  
 
     return model, best_val_metric, val_loader, train_loader
 

@@ -296,6 +296,15 @@ class Generic_Dataset(Dataset):
     def __getitem__(self, idx):
         return None
 
+
+MODALITY_MAP = {
+    'T1':    '_t1.nii.gz',
+    'T1c':   '_t1Gd.nii.gz',   # contrast-enhanced T1
+    'T2':    '_t2.nii.gz',
+    'Flair': '_flair.nii.gz',
+    'Mask':  '_GlistrBoost_ManuallyCorrected.nii.gz',  # use corrected if available
+}
+
 class Generic_MIL_Dataset(Generic_Dataset):
     def __init__(self, path_dir, mri_dir,mode: str='omic', **kwargs):
         super(Generic_MIL_Dataset, self).__init__(**kwargs)
@@ -326,6 +335,7 @@ class Generic_MIL_Dataset(Generic_Dataset):
             normalized_image = (image - mean) / std
         print('noemalized img ', normalized_image)
         return normalized_image
+    
 
     def load_mri_3D(self, case_id, modality):
         """
@@ -336,9 +346,19 @@ class Generic_MIL_Dataset(Generic_Dataset):
         Returns:
             3D MRI scan as a normalized tensor.
         """
-        path = os.path.join(self.mri_data_dir, case_id, f"{modality}.nii.gz")
+
+        case_dir = os.path.join(self.mri_data_dir, str(case_id))
+        suffix = MODALITY_MAP[modality]
+
+        # just grab the first match
+        fname = [f for f in os.listdir(case_dir) if f.endswith(suffix)][0]
+        path = os.path.join(case_dir, fname)
+
+        # path = os.path.join(self.mri_data_dir, case_id, f"{modality}.nii.gz")
         img = nib.load(path).get_fdata()
+
         img_tensor = torch.tensor(img, dtype=torch.float32)
+
         # print('image tensor ' ,img_tensor)
         # normalized_img = self.normalize_mri(img_tensor)
 
@@ -396,10 +416,17 @@ class Generic_MIL_Dataset(Generic_Dataset):
                     T1 = self.load_mri_3D(case_id, 'T1')
                     T2 = self.load_mri_3D(case_id, 'T2')
                     FLAIR = self.load_mri_3D(case_id, 'Flair')
+                    T1c = self.load_mri_3D(case_id, 'T1c')
+                    mask = self.load_mri_3D(case_id, 'mask')
                     # Stack MRI images as channels
-                    mri_tensors = torch.stack([ T2, FLAIR], dim=0)
+                    # mri_tensors = torch.stack([ T2, FLAIR], dim=0)
                     # mri_tensors = torch.stack([T1c, T2, FLAIR], dim=0)
+                    mri_tensors = torch.stack([FLAIR, mask, T1, T1c, T2], dim=0)
                     mri_tensors = mri_tensors.unsqueeze(0)
+
+                    if idx == 0:
+                        print("radio_3D sample shape:", mri_tensors.shape)
+
                     return (mri_tensors, torch.zeros((1, 1)), torch.zeros((1, 1)), label, event_time, c, slide_ids) 
 
                 elif self.mode =='radio_2.5D':
@@ -472,6 +499,22 @@ class Generic_Split(Generic_MIL_Dataset):
         self.mri_data_dir = mri_data_dir
         self.case_ids = self.slide_data['case_id']
         print('Generic_Split')
+
+         # --- NEW: drop cases that don’t have an MRI folder ---
+        if self.mode == 'radio_3D':
+            import os
+            mask = self.slide_data['case_id'].apply(
+                lambda cid: os.path.isdir(os.path.join(self.mri_data_dir, str(cid)))
+            )
+            dropped = (~mask).sum()
+            if dropped > 0:
+                print(f"[Split] Dropping {dropped} cases without MRI folder")
+            self.slide_data = self.slide_data.loc[mask].reset_index(drop=True)
+            self.case_ids = self.slide_data['case_id']
+            # also restrict patient_dict to kept cases
+            self.patient_dict = {k: v for k, v in self.patient_dict.items()
+                                 if k in set(self.slide_data['case_id'])}
+        # -----------------------------------------------
 
         self.slide_cls_ids = [[] for i in range(self.num_classes)]
         for i in range(self.num_classes):

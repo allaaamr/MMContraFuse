@@ -1,0 +1,13 @@
+raw_root: "./data/"
+mri_3d_dir: "./data/3D_Segmented_MRIs/"
+
+
+interim_root: "data/3D_MRI_processed"
+splits_root: "data/splits"
+
+
+mri:
+  do_n4_bias: true
+  skullstrip: "hd-bet"    # /TODO: "bet" or "hd-bet"
+  template_mni: ""        # /TODO: path to MNI template if available
+  target_spacing_mm: 1.0
