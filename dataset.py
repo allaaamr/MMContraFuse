@@ -421,11 +421,9 @@ class Generic_MIL_Dataset(Generic_Dataset):
                     # Stack MRI images as channels
                     # mri_tensors = torch.stack([ T2, FLAIR], dim=0)
                     # mri_tensors = torch.stack([T1c, T2, FLAIR], dim=0)
-                    mri_tensors = torch.stack([FLAIR, T1, T1c, T2], dim=0)
+                    # mri_tensors = torch.stack([FLAIR, T1, T1c, T2], dim=0)
+                    mri_tensors = torch.stack([FLAIR], dim=0)
                     mri_tensors = mri_tensors.unsqueeze(0)
-
-                    if idx == 0:
-                        print("radio_3D sample shape:", mri_tensors.shape)
 
                     return (mri_tensors, torch.zeros((1, 1)), torch.zeros((1, 1)), label, event_time, c, slide_ids) 
 

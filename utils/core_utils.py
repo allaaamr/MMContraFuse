@@ -22,6 +22,8 @@ import torchvision.models.video as vmodels
 import torch.nn as nn
 
 import wandb
+from tqdm.auto import tqdm, trange
+
 
 
 class MRI3DHead(nn.Module):
@@ -102,7 +104,7 @@ def train(datasets: tuple, cur: int, args):
         config=vars(args)
     )
 
-    for epoch in range(args.max_epochs):
+    for epoch in trange(args.max_epochs, desc=f"Fold {cur}"):
         tr_loss_main, tr_loss_total, tr_metric = train_loop(
             epoch, model, train_loader, optimizer, loss_fn, args
         )
@@ -173,7 +175,9 @@ def train_loop(epoch, model, loader, optimizer, loss_fn, args, gc=16):
     # Classification accumulators
     cls_logits, cls_targets = [], []
 
-    for batch_idx, batch in enumerate(loader):
+    # tqdm over batches
+    pbar = tqdm(loader, total=len(loader), desc=f"Train | epoch {epoch}", leave=False)
+    for batch_idx, batch in enumerate(pbar):
         data_MRI, data_WSI, data_omic, y_disc, event_time, censor, slide_ids = batch
 
         # Forward
@@ -188,17 +192,21 @@ def train_loop(epoch, model, loader, optimizer, loss_fn, args, gc=16):
         loss_value = float(loss.detach().cpu())
         loss_reg = 0.0  # hook if you add regularization
 
-        # --- Metric accumulators ---
+        # --- Metric accumulators (epoch-level) ---
         if isinstance(loss_fn, NLLSurvLoss):
             hazards  = torch.sigmoid(h)
             survival = torch.cumprod(1 - hazards, dim=1)
-            risk     = -torch.sum(survival, dim=1).detach().cpu().numpy()  # higher risk = earlier event
+            risk     = -torch.sum(survival, dim=1).detach().cpu().numpy()
             surv_scores.append(risk)
             surv_censors.append(censor.detach().cpu().numpy())
             surv_times.append(event_time.detach().cpu().numpy())
+            live_metric = None  # c-index computed at epoch end
         else:
             cls_logits.append(h.detach().cpu())
             cls_targets.append(y_disc.detach().cpu())
+            with torch.no_grad():
+                preds = torch.argmax(h.detach(), dim=1)
+                live_metric = (preds.cpu() == y_disc.cpu()).float().mean().item()
 
         # Bookkeeping
         loss_main_sum  += loss_value
@@ -210,10 +218,24 @@ def train_loop(epoch, model, loader, optimizer, loss_fn, args, gc=16):
             optimizer.step()
             optimizer.zero_grad()
 
-        if (batch_idx + 1) % 50 == 0:
-            sys.stdout.flush()
+        if torch.cuda.is_available() and (batch_idx + 1) % 100 == 0:
+            wandb.log({
+                "gpu_mem_gb": torch.cuda.memory_allocated() / 1e9,
+                "epoch": epoch,
+                "batch": batch_idx
+            })
 
-    # Epoch metrics
+        # Update the progress bar postfix with running averages
+        avg_total = loss_total_sum / (batch_idx + 1)
+        if isinstance(loss_fn, NLLSurvLoss):
+            pbar.set_postfix({"loss": f"{avg_total:.4f}"})
+        else:
+            pbar.set_postfix({
+                "loss": f"{avg_total:.4f}",
+                "acc*": f"{live_metric:.3f}" if live_metric is not None else "-"
+            })
+
+    # ---- Epoch metrics ----
     loss_main = loss_main_sum / len(loader)
     loss_total = loss_total_sum / len(loader)
 
@@ -225,15 +247,16 @@ def train_loop(epoch, model, loader, optimizer, loss_fn, args, gc=16):
         metric  = float(c_index)
         print(f'Epoch {epoch}: train_surv_loss={loss_main:.4f}, train_loss={loss_total:.4f}, train_c-index={metric:.4f}')
     else:
-        logits = torch.cat(cls_logits, dim=0)
+        logits  = torch.cat(cls_logits, dim=0)
         targets = torch.cat(cls_targets, dim=0)
-        preds = torch.argmax(logits, dim=1)
-        acc = (preds == targets).float().mean().item()
-        metric = acc
+        preds   = torch.argmax(logits, dim=1)
+        acc     = (preds == targets).float().mean().item()
+        metric  = acc
         print(f'Epoch {epoch}: train_ce_loss={loss_main:.4f}, train_loss={loss_total:.4f}, train_acc={metric:.4f}')
 
     sys.stdout.flush()
     return loss_main, loss_total, metric
+
 
 # --------------------
 # VALIDATE 
@@ -246,7 +269,8 @@ def validate(cur, epoch, model, loader, loss_fn, args, gc=16):
     surv_scores, surv_censors, surv_times = [], [], []
     cls_logits, cls_targets = [], []
 
-    for batch_idx, (data_MRI, data_WSI, data_omic, y_disc, event_time, censor, slide_ids) in enumerate(loader):
+    pbar = tqdm(loader, total=len(loader), desc=f"Valid | epoch {epoch}", leave=False)
+    for batch_idx, (data_MRI, data_WSI, data_omic, y_disc, event_time, censor, slide_ids) in enumerate(pbar):
         h = model(x_path=data_WSI, x_omic=data_omic, x_mri=data_MRI)
 
         if isinstance(loss_fn, NLLSurvLoss):
@@ -271,6 +295,10 @@ def validate(cur, epoch, model, loader, loss_fn, args, gc=16):
         loss_main_sum  += loss_value
         loss_total_sum += loss_value + loss_reg
 
+        # Running avg loss on the bar
+        avg_total = loss_total_sum / (batch_idx + 1)
+        pbar.set_postfix({"loss": f"{avg_total:.4f}"})
+
     loss_main = loss_main_sum / len(loader)
     loss_total = loss_total_sum / len(loader)
 
@@ -282,13 +310,12 @@ def validate(cur, epoch, model, loader, loss_fn, args, gc=16):
         metric  = float(c_index)
         print(f'val_surv_loss: {loss_main:.4f}, val_loss: {loss_total:.4f}, val_c-index: {metric:.4f}')
     else:
-        logits = torch.cat(cls_logits, dim=0)
+        logits  = torch.cat(cls_logits, dim=0)
         targets = torch.cat(cls_targets, dim=0)
-        preds = torch.argmax(logits, dim=1)
-        acc = (preds == targets).float().mean().item()
-        metric = acc
-        print(f'val_ce_loss: {loss_main:.4f}, val_loss: {loss_total:.4f}, val_acc: {metric:.4f}')
+        preds   = torch.argmax(logits, dim=1)
+        acc     = (preds == targets).float().mean().item()
+        metric  = acc
+        print(f'val_ce_loss: {loss_main:.4f}, val_loss: {loss_total:.4f}, val_acc={metric:.4f}')
 
     sys.stdout.flush()
     return loss_main, loss_total, metric
-
