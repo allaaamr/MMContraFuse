@@ -10,6 +10,9 @@ from torch.utils.data import Dataset
 from sklearn.model_selection import train_test_split
 from utils.utils import *
 
+import SimpleITK as sitk
+import torch.nn.functional as F
+
 class Generic_Dataset(Dataset):
     def __init__(self,
         csv_path = 'cna_clinical.csv',
@@ -306,11 +309,20 @@ MODALITY_MAP = {
 }
 
 class Generic_MIL_Dataset(Generic_Dataset):
-    def __init__(self, path_dir, mri_dir,mode: str='omic', **kwargs):
+    def __init__(self, path_dir, mri_dir,mode: str='omic', 
+                 target_shape=(96, 128, 128),
+                 clip_percentiles=(1, 99),
+                 resample_iso=True,
+                 iso_spacing=(2.0, 2.0, 2.0),
+                 **kwargs):
         super(Generic_MIL_Dataset, self).__init__(**kwargs)
         self.data_dir = path_dir
         self.mri_data_dir = mri_dir
         self.mode = mode
+        self.target_shape = target_shape
+        self.clip_percentiles = clip_percentiles
+        self.resample_iso = resample_iso
+        self.iso_spacing = iso_spacing
         self.use_h5 = False
         self.genomic_features = self.slide_data.drop(self.metadata, axis=1)
         print('Mode is ', self.mode)
@@ -356,33 +368,70 @@ class Generic_MIL_Dataset(Generic_Dataset):
         print('noemalized img ', normalized_image)
         return normalized_image
     
+    def resample_isotropic(img: sitk.Image, target_spacing=(2.0, 2.0, 2.0)) -> sitk.Image:
+        """Resample to isotropic spacing using BSpline (good for MRI)."""
+        img = sitk.Cast(img, sitk.sitkFloat32)
+        in_spacing = np.array(img.GetSpacing(), dtype=float)
+        in_size    = np.array(img.GetSize(), dtype=float)
+        tgt        = np.array(target_spacing, dtype=float)
+
+        out_size = np.round(in_size * (in_spacing / tgt)).astype(int).tolist()
+        out_size = [max(1, s) for s in out_size]
+
+        res = sitk.ResampleImageFilter()
+        res.SetOutputSpacing(tuple(tgt))
+        res.SetSize(out_size)
+        res.SetOutputDirection(img.GetDirection())
+        res.SetOutputOrigin(img.GetOrigin())
+        res.SetTransform(sitk.Transform())
+        res.SetDefaultPixelValue(0.0)
+        res.SetInterpolator(sitk.sitkBSpline)
+        return res.Execute(img)
+    
 
     def load_mri_3D(self, case_id, modality):
-        """
-        Load a 3D MRI scan for a given patient and modality.
-        Args:
-            case_id (string): ID of the patient.
-           modality (string): MRI modality (e.g., T1, T1c, T2, Flair, or mask).
-        Returns:
-            3D MRI scan as a normalized tensor.
-        """
+        # """
+        # Load a 3D MRI scan for a given patient and modality.
+        # Args:
+        #     case_id (string): ID of the patient.
+        #    modality (string): MRI modality (e.g., T1, T1c, T2, Flair, or mask).
+        # Returns:
+        #     3D MRI scan as a normalized tensor.
+        # """
 
+        # case_dir = os.path.join(self.mri_data_dir, str(case_id))
+        # suffix = MODALITY_MAP[modality]
+
+        # # just grab the first match
+        # fname = [f for f in os.listdir(case_dir) if f.endswith(suffix)][0]
+        # path = os.path.join(case_dir, fname)
+
+        # # path = os.path.join(self.mri_data_dir, case_id, f"{modality}.nii.gz")
+        # img = nib.load(path).get_fdata()
+
+        # img_tensor = torch.tensor(img, dtype=torch.float32)
+
+        # # print('image tensor ' ,img_tensor)
+        # # normalized_img = self.normalize_mri(img_tensor)
+
+        # return img_tensor
+    
         case_dir = os.path.join(self.mri_data_dir, str(case_id))
         suffix = MODALITY_MAP[modality]
-
-        # just grab the first match
-        fname = [f for f in os.listdir(case_dir) if f.endswith(suffix)][0]
+        fname = sorted([f for f in os.listdir(case_dir) if f.endswith(suffix)])[0]
         path = os.path.join(case_dir, fname)
 
-        # path = os.path.join(self.mri_data_dir, case_id, f"{modality}.nii.gz")
-        img = nib.load(path).get_fdata()
+        # read image with sitk
+        img_sitk = sitk.ReadImage(path)
 
-        img_tensor = torch.tensor(img, dtype=torch.float32)
+        if self.resample_iso:
+            img_sitk = resample_isotropic(img_sitk, target_spacing=self.iso_spacing)
 
-        # print('image tensor ' ,img_tensor)
-        # normalized_img = self.normalize_mri(img_tensor)
+        vol_np = sitk.GetArrayFromImage(img_sitk)  # (Z,Y,X) → (D,H,W)
 
-        return img_tensor
+        vol_t = self._normalize_3d(vol_np)  # your z-score
+        vol_t = self._resize_3d(vol_t)      # fixed shape
+        return vol_t
 
     def load_mri_2_5D(self, case_id):
         """
