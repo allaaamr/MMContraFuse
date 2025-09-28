@@ -131,6 +131,7 @@ def transform_mut_matrix(df: pd.DataFrame, genes_to_keep) -> pd.DataFrame:
     mutation_matrix.reset_index()
     return mutation_matrix
 
+
 # -------------------------
 # Main pipeline
 # -------------------------

@@ -41,6 +41,7 @@ def main(args):
         ### Specify the input dimension size if using genomic features.
 
         args.omic_input_dim = train_dataset.genomic_features.shape[1]
+        args.radio_input_dim = train_dataset.radiomics_features.shape[1]
         print("Genomic Dimension", args.omic_input_dim)
         sys.stdout.flush()
 
@@ -80,7 +81,7 @@ parser.add_argument('--env', type=str, default='server')
 parser.add_argument('--xai', action='store_true', help="Enable XAI (e.g., SHAP, IG) analysis")
 
 parser.add_argument('--path_dir',   type=str, default='path/to/data_root_dir', help='Data directory to WSI features (extracted via CLAM')
-parser.add_argument('--csv',   type=str, default='data/processed_tabular_data/rna_clinical.csv', help='directory to clinical and genomics csv file')
+parser.add_argument('--csv',   type=str, default='data/processed_tabular_data/cna_160.csv', help='directory to clinical and genomics csv file')
 parser.add_argument('--mri_dir',   type=str, default='data/2.5D_MRIs', help='directory to MRI data')
 
 parser.add_argument('--seed', 			 type=int, default=1, help='Random seed for reproducible experiment (default: 1)')
@@ -154,7 +155,7 @@ seed_torch(args.seed)
 encoding_size = 1024
 
 # Depending on the downstream task the label column to predict is 
-if args.task == "survival":
+if args.task == "risk":
     label_col = "survival"
     n_bins = args.n_classes
 else:

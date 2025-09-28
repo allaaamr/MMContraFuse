@@ -7,12 +7,7 @@ from sksurv.metrics import concordance_index_censored
 import torch
 from dataset import save_splits
 from models.Encoder.genomic import SNN
-# from models.healnet import HealNet
-# from models.transformer_fusion import TransformerFusion
-# from models.DeepRisk import Res34
-# from models.radiomic_model import DenseNet2D, EfficientNet2D, ResNet3D
-# from models.pathomic_model import MIL_Attention_FC_surv, PorpoiseAMIL
-# from models.fusion_model import PorpoiseMMF,RadiomicMMF, PathoRadioMMF, PathoRadioGenomicMMF, GGMMF
+from models.Encoder.radiomics_1D import Radiomics1DNet
 from utils.utils import *
 from utils.loss import NLLSurvLoss, CoxPHSurvLoss
 import sys
@@ -37,12 +32,11 @@ def train(datasets: tuple, cur: int, args):
 
     print('\nInit Model...', end=' ')
     if args.mode == 'genomic':
-        model_dict = {
-            'omic_input_dim': args.omic_input_dim,
-            'model_size_omic': args.model_size_omic,
-            'n_classes': args.n_classes
-        }
+        model_dict = { 'omic_input_dim': args.omic_input_dim, 'model_size_omic': args.model_size_omic,'n_classes': args.n_classes}
         model = SNN(**model_dict)
+    if args.mode == 'radio_1D':
+        model_dict = { 'radio_input_dim': args.radio_input_dim-1, 'n_classes': args.n_classes}
+        model = Radiomics1DNet(**model_dict)
 
     print('\nInit optimizer ...', end=' ')
     optimizer = get_optim(model, args)
@@ -133,7 +127,6 @@ def train_loop(epoch, model, loader, optimizer, loss_fn, args, gc=16):
             loss = loss_fn(h, y_disc.long())
 
         loss_value = float(loss.detach().cpu())
-        loss_reg = 0.0  # hook if you add regularization
 
         # --- Metric accumulators ---
         if isinstance(loss_fn, NLLSurvLoss):
@@ -149,10 +142,10 @@ def train_loop(epoch, model, loader, optimizer, loss_fn, args, gc=16):
 
         # Bookkeeping
         loss_main_sum  += loss_value
-        loss_total_sum += loss_value + loss_reg
+        loss_total_sum += loss_value 
 
         # Backward / grad accumulation
-        (loss / gc + loss_reg).backward()
+        (loss / gc ).backward()
         if (batch_idx + 1) % gc == 0:
             optimizer.step()
             optimizer.zero_grad()

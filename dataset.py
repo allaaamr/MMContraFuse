@@ -69,8 +69,14 @@ class Generic_Dataset(Dataset):
         slide_data = pd.read_csv(csv_path, low_memory=False)
         self.slide_data =slide_data
         slide_data = slide_data.dropna(subset=["survival", "censorship"]).copy()
-
         
+        # ---- load PyRadiomics ----
+        radiomics_csv_path = "data/processed_tabular_data/radio1D_clinical.csv"
+        radiomics_df = pd.read_csv(radiomics_csv_path, low_memory=False)
+        self.radiomics_features = radiomics_df
+        print(f"PyRadiomics features shape: {self.radiomics_features.shape}")
+    
+
         # optional shuffle
         if shuffle:
             np.random.seed(seed)
@@ -206,6 +212,10 @@ class Generic_Dataset(Dataset):
         if self.create_split:
             self.create_splits(n_splits)
 
+        self.genomic_features = self.genomic_features.replace([np.inf, -np.inf], np.nan)
+
+
+
     def cls_ids_prep(self):
         r"""
 
@@ -274,14 +284,51 @@ class Generic_Dataset(Dataset):
         df_val_slice = self.slide_data[mask].reset_index(drop=True)
         print('df_val_slice ' ,df_val_slice.shape)
 
-        train = Generic_Split(df_train_slice, metadata=self.metadata, mode=self.mode, mri_data_dir = self.mri_data_dir, data_dir=self.data_dir, label_col=self.label_col, patient_dict=self.patient_dict, num_classes=self.num_classes)
-        val = Generic_Split(df_val_slice, metadata=self.metadata, mode=self.mode, mri_data_dir = self.mri_data_dir,  data_dir=self.data_dir, label_col=self.label_col, patient_dict=self.patient_dict, num_classes=self.num_classes)
+        # SPLIT RADIOMICS FEATURES based on train/val case_ids
+
+        train_case_ids = set(df_train_slice['case_id'])
+        val_case_ids = set(df_val_slice['case_id'])
+        
+        radiomics_train = None
+        radiomics_val = None
+    
+        if self.radiomics_features is not None:
+            # Split radiomics features based on case_ids
+            radiomics_train = self.radiomics_features[self.radiomics_features['case_id'].isin(train_case_ids)].copy()
+            
+            radiomics_val = self.radiomics_features[self.radiomics_features['case_id'].isin(val_case_ids)].copy()
+
+        # Normalize radiomics features if they exist
+        if radiomics_train is not None:
+            print("****** Normalizing 1D Radiomics Features (in case needed in fusion..) ******")
+            scalers_radio = get_radiomics_scaler(radiomics_train)
+            radiomics_train = apply_radiomics_scaler(radiomics_train, scalers_radio)
+            radiomics_val = apply_radiomics_scaler(radiomics_val, scalers_radio)
+            # print(f"1D Radiomics features normalized - Train: {train.radiomics_features.shape}, Val: {val.radiomics_features.shape}")
+            # radiomics_normalized_combined = pd.concat([ radiomics_train, radiomics_val ], ignore_index=True)
+            # self.radiomics_features = radiomics_normalized_combined
+            # print("after norm ", self.radiomics_features.head())
+
+        # In your return_splits method, add this right after splitting:
+        print(f"TCGA-02-0006 in train_case_ids: {'TCGA-02-0006' in train_case_ids}")
+        print(f"TCGA-02-0006 in val_case_ids: {'TCGA-02-0006' in val_case_ids}")
+
+        # Check if it exists in the training subset used for scaler fitting:
+        if radiomics_train is not None:
+            case_in_train = 'TCGA-02-0006' in radiomics_train['case_id'].values
+            print(f"TCGA-02-0006 in radiomics_train for scaler: {case_in_train}")
+
+        train = Generic_Split(df_train_slice, metadata=self.metadata, mode=self.mode, mri_data_dir = self.mri_data_dir,  radiomics_features=radiomics_train, data_dir=self.data_dir, label_col=self.label_col, patient_dict=self.patient_dict, num_classes=self.num_classes)
+        val = Generic_Split(df_val_slice, metadata=self.metadata, mode=self.mode, mri_data_dir = self.mri_data_dir,  radiomics_features=radiomics_val,   data_dir=self.data_dir, label_col=self.label_col, patient_dict=self.patient_dict, num_classes=self.num_classes)
 
         print("****** Normalizing Data ******")
         scalers = train.get_scaler()
         train.apply_scaler(scalers=scalers)
         val.apply_scaler(scalers=scalers)
         print(self.genomic_features.shape)
+
+
+
         return train, val
 
     def get_list(self, ids):
@@ -359,6 +406,25 @@ class Generic_MIL_Dataset(Generic_Dataset):
         # slices_to_keep = [3, 4, 5, 27, 28, 29]
         # img = img[slices_to_keep, :, :]  # Shape: (12, 256, 256)
         return img
+
+    def get_radiomics_1D(self, case_id):
+        """
+        Get PyRadiomics features for a specific case_id
+        Returns: torch.Tensor of radiomics features
+        """
+        # Find the row for this case_id
+        case_row = self.radiomics_features[self.radiomics_features['case_id'] == case_id]
+        
+        if len(case_row) == 0:
+            # print(f"Warning: No radiomics features found for case_id: {case_id}")
+            # Return zeros with the same number of features as other cases
+            n_features = len(self.radiomics_features.columns) - 1  # subtract 1 for case_id column
+            return torch.zeros((n_features,))
+        
+        # Get feature values (excluding case_id column)
+        feature_values = case_row.drop(['case_id'], axis=1).values.flatten()
+        
+        return torch.tensor(feature_values, dtype=torch.float32)
     
     def load_from_h5(self, toggle):
         self.use_h5 = toggle
@@ -391,7 +457,13 @@ class Generic_MIL_Dataset(Generic_Dataset):
                 elif self.mode == 'genomic':
                     genomic_features = torch.tensor(self.genomic_features.iloc[idx])
                     return (torch.zeros((1,1)), torch.zeros((1,1)), genomic_features.unsqueeze(dim=0), label, event_time, c, slide_ids)
-                
+
+                elif self.mode =='radio_1D':
+                    radiomics_features = self.get_radiomics_1D(case_id)
+                    return_values= (radiomics_features.unsqueeze(0), torch.zeros((1,1)), torch.zeros((1,1)), label, event_time, c, slide_ids)
+                    return return_values
+
+                                
                 elif self.mode =='radio_3D':
                     T1 = self.load_mri_3D(case_id, 'T1')
                     T2 = self.load_mri_3D(case_id, 'T2')
@@ -457,10 +529,37 @@ class Generic_MIL_Dataset(Generic_Dataset):
                     genomic_features = torch.tensor(self.genomic_features.iloc[idx])
 
                     return (mri_tensors, path_features, genomic_features.unsqueeze(dim=0), label, event_time, c, slide_ids) 
-                
+
+def get_radiomics_scaler(df):
+    """Get scaler fitted on radiomics DataFrame"""
+    if df is not None and len(df) > 0:
+        feature_cols = [col for col in df.columns if col != 'case_id']
+        if len(feature_cols) > 0:
+            from sklearn.preprocessing import StandardScaler
+            scaler_radio = StandardScaler().fit(df[feature_cols])
+            return scaler_radio
+    return None
+
+def apply_radiomics_scaler(df, scaler):
+    """Apply scaler to radiomics DataFrame in-place"""
+    if scaler is not None and df is not None and len(df) > 0:
+        feature_cols = [col for col in df.columns if col != 'case_id']
+        if len(feature_cols) > 0:
+
+
+            # Scale only the feature columns
+            scaled_features = scaler.transform(df[feature_cols])
+
+
+
+            # Update DataFrame in-place
+            df[feature_cols] = scaled_features
+            
+    return df
+
 class Generic_Split(Generic_MIL_Dataset):
-    def __init__(self, slide_data, metadata, mode, mri_data_dir,
-        signatures=None, data_dir=None, label_col=None, patient_dict=None, num_classes=2):
+    def __init__(self, slide_data, metadata, mode, mri_data_dir,radiomics_features,
+        signatures=None, data_dir=None, label_col=None, patient_dict=None, num_classes=2, ):
         self.use_h5 = False
         self.slide_data = slide_data
         self.metadata = metadata
@@ -478,7 +577,16 @@ class Generic_Split(Generic_MIL_Dataset):
             self.slide_cls_ids[i] = np.where(self.slide_data['label'] == i)[0]
 
         self.genomic_features = self.slide_data.drop(self.metadata, axis=1)
+        self.radiomics_features = radiomics_features
 
+    # def get_scaler_radio1D(self):
+    #     scaler_radio= StandardScaler().fit(self.radiomics_features)
+    #     return (scaler_radio,)
+
+    # def apply_scaler_radio1D(self, scalers: tuple=None):
+    #     transformed = pd.DataFrame(scalers[0].transform(self.radiomics_features))
+    #     transformed.columns = self.radiomics_features.columns
+    #     self.radiomics_features = transformed
 
     def get_scaler(self):
         scaler_omic = StandardScaler().fit(self.genomic_features)

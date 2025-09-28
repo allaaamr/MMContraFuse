@@ -16,4 +16,4 @@ def SNN_Block(dim1, dim2, dropout=0.25):
     return nn.Sequential(
             nn.Linear(dim1, dim2),
             nn.ELU(),
-            nn.AlphaDropout(p=dropout, inplace=False))
+            nn.AlphaDropout(p=0.4, inplace=False))
