@@ -70,18 +70,18 @@ def train(datasets: tuple, cur: int, args):
         train_losses.append(tr_loss_total)
         val_losses.append(va_loss_total)
 
-        # simple early-stopping by the task metric
-        improved = va_metric > best_val_metric
-        if improved:
-            best_val_metric = va_metric
-            patience_counter = 0
-        else:
-            patience_counter += 1
-        if patience and patience_counter >= patience:
-            print(f"Early stop at epoch {epoch} (best {metric_name}: {best_val_metric:.4f})")
-            break
+        # # simple early-stopping by the task metric
+        # improved = va_metric > best_val_metric
+        # if improved:
+        #     best_val_metric = va_metric
+        #     patience_counter = 0
+        # else:
+        #     patience_counter += 1
+        # if patience and patience_counter >= patience:
+        #     print(f"Early stop at epoch {epoch} (best {metric_name}: {best_val_metric:.4f})")
+        #     break
 
-    print(f'Val {metric_name}: {best_val_metric:.4f}')
+    print(f'Val {metric_name}: {va_metric:.3f}')
 
     # --- Plots ---
     epochs = range(1, len(train_metrics) + 1)
@@ -100,7 +100,7 @@ def train(datasets: tuple, cur: int, args):
     plt.legend()
     plt.savefig(f"loss_plot_{cur}.png", dpi=300, bbox_inches='tight')
 
-    return model, best_val_metric, val_loader, train_loader
+    return model, va_metric, val_loader, train_loader
 
 # --------------------
 # TRAIN LOOP 

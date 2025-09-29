@@ -81,7 +81,7 @@ parser.add_argument('--env', type=str, default='server')
 parser.add_argument('--xai', action='store_true', help="Enable XAI (e.g., SHAP, IG) analysis")
 
 parser.add_argument('--path_dir',   type=str, default='path/to/data_root_dir', help='Data directory to WSI features (extracted via CLAM')
-parser.add_argument('--csv',   type=str, default='data/processed_tabular_data/cna_160.csv', help='directory to clinical and genomics csv file')
+parser.add_argument('--csv',   type=str, default='cna_177_patients.csv', help='directory to clinical and genomics csv file')
 parser.add_argument('--mri_dir',   type=str, default='data/2.5D_MRIs', help='directory to MRI data')
 
 parser.add_argument('--seed', 			 type=int, default=1, help='Random seed for reproducible experiment (default: 1)')
@@ -99,7 +99,6 @@ parser.add_argument('--drop_out',        action='store_true', default=True, help
 parser.add_argument('--model_size_wsi',  type=str, default='small', help='Network size of AMIL model')
 parser.add_argument('--model_size_omic', type=str, default='small', help='Network size of SNN model')
 parser.add_argument('--n_classes', type=int, default=4)
-
 
 
 parser.add_argument('--gate_path', action='store_true', default=False)

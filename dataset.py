@@ -66,7 +66,7 @@ class Generic_Dataset(Dataset):
         self.n_splits = n_splits
         self.label_col = label_col
         # ---- load CSV ----
-        slide_data = pd.read_csv(csv_path, low_memory=False)
+        slide_data = pd.read_csv(f"data/processed_tabular_data/{csv_path}", low_memory=False)
         self.slide_data =slide_data
         slide_data = slide_data.dropna(subset=["survival", "censorship"]).copy()
         
@@ -200,7 +200,7 @@ class Generic_Dataset(Dataset):
                         # metadata columns (first 12 cols, usually non-feature data)
             metadata = [
                     'disc_label', 'Unnamed: 0', 'case_id', 'label', 'slide_id',
-                    'type', 'age', 'gender', 'survival', 'censorship', "PatientID"
+                    'type', 'age', 'gender', 'survival', 'censorship'
                 ]
          # ---- store final dataframes ----
 
