@@ -13,7 +13,41 @@ import pdb
 import torch.nn.functional as F
 from itertools import islice
 import matplotlib.pyplot as plt
+import os
+import warnings
+from torch.utils.data import Dataset
 
+class _ExceptionSafeDataset(Dataset):
+    """
+    Wraps a dataset to catch per-item exceptions and return None instead.
+    The collate_fn must be able to drop None entries.
+    """
+    def __init__(self, base):
+        self.base = base
+
+    def __len__(self):
+        return len(self.base)
+
+    def __getitem__(self, idx):
+        try:
+            return self.base[idx]
+        except FileNotFoundError as e:
+            # Try to show a helpful case id if available
+            case_id = None
+            try:
+                if hasattr(self.base, "case_ids"):
+                    case_id = self.base.case_ids[idx]
+            except Exception:
+                pass
+            msg = f"[WARN] Missing file for index {idx}"
+            if case_id is not None:
+                msg += f" (case_id={case_id})"
+            msg += f": {e}"
+            warnings.warn(msg)
+            return None
+        except Exception as e:
+            warnings.warn(f"[WARN] Skipping index {idx} due to error: {e}")
+            return None
 
 def pickle_obj(obj, path):
     with open(path, 'wb') as f:
@@ -24,25 +58,50 @@ def unpickle(path):
         obj = pickle.load(f)
     return obj
 
-def get_split_loader(split_dataset, training = False, testing = False, weighted = False, mode='coattn', batch_size=1):
+def get_split_loader(split_dataset, training=False, testing=False, weighted=False, mode='coattn', batch_size=1):
     """
-        return either the validation loader or training loader 
+    return either the validation loader or training loader 
     """
     collate = collate_MIL
     kwargs = {}
+    safe_dataset = _ExceptionSafeDataset(split_dataset)  # <--- wrap here
+
     if not testing:
         if training:
             if weighted:
                 weights = make_weights_for_balanced_classes_split(split_dataset)
-                loader = DataLoader(split_dataset, batch_size=batch_size, sampler = WeightedRandomSampler(weights, len(weights)), collate_fn = collate, **kwargs)    
+                loader = DataLoader(
+                    safe_dataset,
+                    batch_size=batch_size,
+                    sampler=WeightedRandomSampler(weights, len(weights)),
+                    collate_fn=collate,
+                    **kwargs
+                )
             else:
-                loader = DataLoader(split_dataset, batch_size=batch_size, sampler = RandomSampler(split_dataset), collate_fn = collate, **kwargs)
+                loader = DataLoader(
+                    safe_dataset,
+                    batch_size=batch_size,
+                    sampler=RandomSampler(split_dataset),
+                    collate_fn=collate,
+                    **kwargs
+                )
         else:
-            loader = DataLoader(split_dataset, batch_size=1, sampler = SequentialSampler(split_dataset), collate_fn = collate, **kwargs)
-    
+            loader = DataLoader(
+                safe_dataset,
+                batch_size=1,
+                sampler=SequentialSampler(split_dataset),
+                collate_fn=collate,
+                **kwargs
+            )
     else:
-        ids = np.random.choice(np.arange(len(split_dataset), int(len(split_dataset)*0.1)), replace = False)
-        loader = DataLoader(split_dataset, batch_size=1, sampler = SubsetSequentialSampler(ids), collate_fn = collate, **kwargs )
+        ids = np.random.choice(np.arange(len(split_dataset), int(len(split_dataset)*0.1)), replace=False)
+        loader = DataLoader(
+            safe_dataset,
+            batch_size=1,
+            sampler=SubsetSequentialSampler(ids),
+            collate_fn=collate,
+            **kwargs
+        )
 
     return loader
 
@@ -81,11 +140,16 @@ def initialize_weights(module):
             nn.init.constant_(m.bias, 0)
 
 def collate_MIL(batch):
+    # Drop items that failed to load
+    batch = [b for b in batch if b is not None]
+    if len(batch) == 0:
+        # Signal to the training loop to skip this batch
+        return None
+
     mri = torch.cat([item[0] for item in batch], dim=0).type(torch.FloatTensor)
-    img = torch.cat([item[1] for item in batch], dim = 0)
-    omic = torch.cat([item[2] for item in batch], dim = 0).type(torch.FloatTensor)
+    img = torch.cat([item[1] for item in batch], dim=0)
+    omic = torch.cat([item[2] for item in batch], dim=0).type(torch.FloatTensor)
     label = torch.LongTensor([int(item[3].item()) for item in batch])
-    # label = torch.LongTensor([item[2] for item in batch])
     event_time = torch.FloatTensor([item[4] for item in batch])
     c = torch.FloatTensor([item[5] for item in batch])
     slide_ids = [item[6] for item in batch]

@@ -92,7 +92,7 @@ parser.add_argument('--split_dir',       type=str, default='data/splits', help='
 
 ### Model Parameters.
 parser.add_argument('--task',            type=str, choices=['subtype', 'risk'], default='risk', help='Specifies which downstream task to perform.')
-parser.add_argument('--mode',            type=str, choices=['genomic', 'path', 'radio_1D' ,'radio_2.5D', 'radio_3D', 'pathomic', 'radiomic1D', 'radiomic2.5D', 'radiomic3D', 'radiopathomics'], default='genomic', help='Specifies which modalities to use.')
+parser.add_argument('--mode',            type=str, choices=['genomic', 'path', 'radio_1D' ,'radio_2.5D', 'radio_3D', 'pathomic', 'radiomic1D', 'radiomic2.5D', 'radiomic3D', 'radiopathomics', 'genomic_radio_2.5D'], default='genomic', help='Specifies which modalities to use.')
 parser.add_argument('--fusion',          type=str, choices=['concat', 'bi_attn', 'tri_attn', 'bi_contrast', 'tri_contrast'], default='concat', help='Type of fusion. (Default: concat).')
 parser.add_argument('--drop_out',        action='store_true', default=True, help='Enable dropout (p=0.25)')
 parser.add_argument('--model_size_wsi',  type=str, default='small', help='Network size of AMIL model')
@@ -132,6 +132,48 @@ parser.add_argument('--data',            type=str, default='cna_mut_df')
 parser.add_argument('--patience',        type=int,  default=8)
 parser.add_argument('--create_split',    action='store_true', default=False)
 
+# deeprisk 2.5D network parameters
+parser.add_argument('--layer_num', type=int, default=32,
+                    help="Number of MRI slices (channels) expected by the 2.5D network.")
+
+parser.add_argument('--p_slice_drop', type=float, default=0.15,
+                    help="Probability of randomly dropping MRI slices during training (SliceDrop).")
+
+parser.add_argument('--sd_prob', type=float, default=0.1,
+                    help="Probability of stochastic depth (skip residual block connections during training).")
+
+parser.add_argument('--attn_dropout', type=float, default=0.1,
+                    help="Dropout probability applied inside MRI attention block.")
+
+parser.add_argument('--p_spatial_drop', type=float, default=0.05,
+                    help="Spatial Dropout2d probability applied to convolutional features.")
+
+parser.add_argument('--norm', type=str, choices=['gn','in'], default='gn',
+                    help="Normalization type for MRI conv blocks: GroupNorm (gn) or InstanceNorm (in).")
+
+# model fusion parameters
+parser.add_argument('--fuse_point_mri', type=str, choices=['stem','block1','gap'], default='gap',
+                    help="Where to extract MRI features for fusion (stem | block1 | gap).")
+
+parser.add_argument('--fuse_k_omic', type=int, default=None,
+                    help="How many layers of the SNN (genomics) to run before fusion (1..N). Default: None (all layers).")
+
+parser.add_argument('--dim_fuse', type=int, default=256,
+                    help="Hidden dimension of fused representation for concat/gated fusion.")
+
+parser.add_argument('--d_model', type=int, default=256,
+                    help="Dimension of queries/keys/values in cross-attention fusion.")
+
+parser.add_argument('--nhead', type=int, default=4,
+                    help="Number of attention heads in cross-attention fusion.")
+
+parser.add_argument('--head_hidden', type=int, default=256,
+                    help="Hidden size of the final classification head MLP.")
+
+parser.add_argument('--head_dropout', type=float, default=0.3,
+                    help="Dropout probability in the final classification head.")
+
+
 args = parser.parse_args()
 device=torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -154,11 +196,11 @@ seed_torch(args.seed)
 encoding_size = 1024
 
 # Depending on the downstream task the label column to predict is 
-if args.task == "survival":
-    label_col = "survival"
+if args.task in ["risk", "survival"]:
+    label_col = "survival"   # continuous survival time / risk target
     n_bins = args.n_classes
-else:
-	label_col = "type"
+else:  # subtype classification
+    label_col = "type"
 
 
 	
