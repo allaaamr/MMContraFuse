@@ -116,3 +116,64 @@ python main.py --mode radio_1D --task subtype
 ```
 
 ### Multi-Modal Fusion 
+## Contrastive Fusion Architecture Explanation
+The contrastive fusion approach implements the ContIG (Contrastive learning for Imaging and Genetics) methodology, which learns joint representations between genomic and radiological data through self-supervised contrastive learning. Here's how each component works:
+
+# 1  #ConrRG: Core Contrastive Model for Radiology & Genomics
+path:
+```bash
+models/Fusion/ContRG.py
+```
+This is the heart of the contrastive learning system. It implements:
+
+-Dual Encoders: Separate encoders for genomics (SNN) and radiomics (Radiomics1DNet) that extract modality-specific features
+-Projection Heads: Two-layer MLPs that map features from each encoder to a shared 128-dimensional embedding space where both modalities can be compared
+-Contrastive Loss (InfoNCE): Treats paired genomic-radiomic data from the same patient as positive pairs, and all other combinations in the batch as negative pairs. ---The loss pulls positive pairs together while pushing negative pairs apart
+-Bidirectional Learning: Computes loss in both directions (genomics→radiomics and radiomics→genomics) for symmetric learning
+
+# 2 Downstream Task Adapter
+path:
+```bash
+ utils/downstream.py
+```
+Handles the complete downstream evaluation workflow:
+
+-evaluate_downstream_task(): Main function that takes a pre-trained ContRG model and evaluates it on classification or survival tasks
+-Training Loop: Uses standard supervised training with task-specific losses (CrossEntropy for classification, NLLSurvLoss for survival)
+-Comparison Modes: Evaluates both linear probing (frozen encoders) and fine-tuning to assess representation quality
+-Visualization: Creates plots comparing training/validation metrics and losses
+
+# 3 Contrastive Pre-training
+path:
+```bash
+utils/train_contrg.py
+```
+Manages the self-supervised pre-training phase
+
+# 4 Unified Training Interface
+path:
+```bash
+main.py
+```
+Orchestrates the entire pipeline with two distinct modes:
+***Standard Mode:*** Traditional supervised learning
+
+Direct end-to-end training on labeled data
+No contrastive pre-training
+
+***Contrastive Mode (2-phase approach): ***
+
+Phase 1 - Pre-training:
+
+Trains ContRG model using contrastive loss
+No labels needed, just paired genomic-radiomic data
+Can either train from scratch or load pre-trained checkpoint
+
+
+Phase 2 - Downstream:
+
+Takes pre-trained ContRG model
+Evaluates on supervised task (classification/survival)
+Compares linear probing vs fine-tuning performance
+
+
