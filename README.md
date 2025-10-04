@@ -67,7 +67,7 @@ pip install -r requirements.txt
 
 ### 🧬 Data Downloading
 
-# Download Raw Clinical & Genomic Data
+ Download Raw Clinical & Genomic Data
 LGG dataset: TCGA Pan-Cancer Atlas (LGG)
 GBM dataset: TCGA Pan-Cancer Atlas (GBM)
 
