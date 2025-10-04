@@ -7,6 +7,7 @@ from lifelines.utils import concordance_index
 import numpy as np
 from sksurv.metrics import concordance_index_censored
 import sys
+import matplotlib.pyplot as plt
 
 from utils.utils import get_optim
 
@@ -97,7 +98,7 @@ def evaluate_downstream_task(
     plot_downstream_results(train_metrics, val_metrics, train_losses, val_losses, 
                            metric_name, mode_name, args)
     
-    return model
+    return model, va_metric, train_loader, val_loader 
 
 def plot_downstream_results(train_metrics, val_metrics, train_losses, val_losses, 
                            metric_name, mode_name, args):

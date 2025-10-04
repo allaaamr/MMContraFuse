@@ -37,10 +37,13 @@ def get_split_loader(split_dataset, training = False, testing = False, weighted 
         if training:
             if weighted:
                 weights = make_weights_for_balanced_classes_split(split_dataset)
-                loader = DataLoader(split_dataset, batch_size=batch_size, sampler = WeightedRandomSampler(weights, len(weights)), collate_fn = collate, **kwargs)    
+
+                loader = DataLoader(split_dataset, batch_size=batch_size, sampler = WeightedRandomSampler(weights, len(weights)), collate_fn = collate, **kwargs)   
             else:
+
                 loader = DataLoader(split_dataset, batch_size=batch_size, sampler = RandomSampler(split_dataset), collate_fn = collate, **kwargs)
         else:
+
             loader = DataLoader(split_dataset, batch_size=batch_size, sampler = SequentialSampler(split_dataset), collate_fn = collate, **kwargs)
       
     
@@ -89,7 +92,6 @@ def collate_MIL(batch):
     img = torch.cat([item[1] for item in batch], dim = 0)
     omic = torch.cat([item[2] for item in batch], dim = 0).type(torch.FloatTensor)
     label = torch.LongTensor([int(item[3].item()) for item in batch])
-    # label = torch.LongTensor([item[2] for item in batch])
     event_time = torch.FloatTensor([item[4] for item in batch])
     c = torch.FloatTensor([item[5] for item in batch])
     slide_ids = [item[6] for item in batch]

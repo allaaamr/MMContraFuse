@@ -73,6 +73,7 @@ class Generic_Dataset(Dataset):
         # ---- load PyRadiomics ----
         radiomics_csv_path = "data/processed_tabular_data/radio1D_clinical.csv"
         radiomics_df = pd.read_csv(radiomics_csv_path, low_memory=False)
+        radiomics_df.drop(columns=["Unnamed: 0", "type"], inplace=True)
         self.radiomics_features = radiomics_df
         print(f"PyRadiomics features shape: {self.radiomics_features.shape}")
     
@@ -215,7 +216,6 @@ class Generic_Dataset(Dataset):
         self.genomic_features = self.genomic_features.replace([np.inf, -np.inf], np.nan)
 
 
-
     def cls_ids_prep(self):
         r"""
 
@@ -310,13 +310,11 @@ class Generic_Dataset(Dataset):
             # print("after norm ", self.radiomics_features.head())
 
         # In your return_splits method, add this right after splitting:
-        print(f"TCGA-02-0006 in train_case_ids: {'TCGA-02-0006' in train_case_ids}")
-        print(f"TCGA-02-0006 in val_case_ids: {'TCGA-02-0006' in val_case_ids}")
+
 
         # Check if it exists in the training subset used for scaler fitting:
         if radiomics_train is not None:
             case_in_train = 'TCGA-02-0006' in radiomics_train['case_id'].values
-            print(f"TCGA-02-0006 in radiomics_train for scaler: {case_in_train}")
 
         train = Generic_Split(df_train_slice, metadata=self.metadata, mode=self.mode, mri_data_dir = self.mri_data_dir,  radiomics_features=radiomics_train, data_dir=self.data_dir, label_col=self.label_col, patient_dict=self.patient_dict, num_classes=self.num_classes)
         val = Generic_Split(df_val_slice, metadata=self.metadata, mode=self.mode, mri_data_dir = self.mri_data_dir,  radiomics_features=radiomics_val,   data_dir=self.data_dir, label_col=self.label_col, patient_dict=self.patient_dict, num_classes=self.num_classes)
@@ -352,7 +350,6 @@ class Generic_MIL_Dataset(Generic_Dataset):
         self.use_h5 = False
         self.genomic_features = self.slide_data.drop(self.metadata, axis=1)
         print('Mode is ', self.mode)
-        print(self.genomic_features.shape)
     
 
         r"""
@@ -414,7 +411,7 @@ class Generic_MIL_Dataset(Generic_Dataset):
         """
         # Find the row for this case_id
         case_row = self.radiomics_features[self.radiomics_features['case_id'] == case_id]
-        
+
         if len(case_row) == 0:
             # print(f"Warning: No radiomics features found for case_id: {case_id}")
             # Return zeros with the same number of features as other cases
@@ -423,7 +420,6 @@ class Generic_MIL_Dataset(Generic_Dataset):
         
         # Get feature values (excluding case_id column)
         feature_values = case_row.drop(['case_id'], axis=1).values.flatten()
-        
         return torch.tensor(feature_values, dtype=torch.float32)
     
     def load_from_h5(self, toggle):
@@ -432,6 +428,7 @@ class Generic_MIL_Dataset(Generic_Dataset):
     def __getitem__(self, idx):
         case_id = self.slide_data['case_id'][idx]
         event_time = torch.Tensor([self.slide_data[self.label_col][idx]])
+
         if self.label_col == "survival":
             label = torch.Tensor([self.slide_data['disc_label'][idx]])
             c = torch.Tensor([self.slide_data['censorship'][idx]])
@@ -443,92 +440,42 @@ class Generic_MIL_Dataset(Generic_Dataset):
 
         data_dir = self.data_dir
         
-        if self.data_dir:
-                if self.mode == 'path':
-                    path_features = []
-                    for slide_id in slide_ids:
-                        wsi_path = os.path.join(data_dir, 'pt_files', '{}.pt'.format(slide_id.rstrip('.svs')))
-                        wsi_bag = torch.load(wsi_path)
-                        path_features.append(wsi_bag)
-                    path_features = torch.cat(path_features, dim=0) 
-                    return_values =torch.zeros((1,1)), path_features, torch.zeros((1,1)), label, event_time, c,slide_ids
-                    return return_values
 
-                elif self.mode == 'genomic':
-                    genomic_features = torch.tensor(self.genomic_features.iloc[idx])
-                    return (torch.zeros((1,1)), torch.zeros((1,1)), genomic_features.unsqueeze(dim=0), label, event_time, c, slide_ids)
+        if self.mode == 'genomic':
+            genomic_features = torch.tensor(self.genomic_features.iloc[idx])
+            return (torch.zeros((1,1)), torch.zeros((1,1)), genomic_features.unsqueeze(dim=0), label, event_time, c, slide_ids)
 
-                elif self.mode =='radio_1D':
-                    radiomics_features = self.get_radiomics_1D(case_id)
-                    return_values= (radiomics_features.unsqueeze(0), torch.zeros((1,1)), torch.zeros((1,1)), label, event_time, c, slide_ids)
-                    return return_values
+        elif self.mode =='radio_1D':
+            radiomics_features = self.get_radiomics_1D(case_id)
+            return_values= (radiomics_features.unsqueeze(0), torch.zeros((1,1)), torch.zeros((1,1)), label, event_time, c, slide_ids)
+            return return_values
 
-                                
-                elif self.mode =='radio_3D':
-                    T1 = self.load_mri_3D(case_id, 'T1')
-                    T2 = self.load_mri_3D(case_id, 'T2')
-                    FLAIR = self.load_mri_3D(case_id, 'Flair')
-                    # Stack MRI images as channels
-                    mri_tensors = torch.stack([ T2, FLAIR], dim=0)
-                    # mri_tensors = torch.stack([T1c, T2, FLAIR], dim=0)
-                    mri_tensors = mri_tensors.unsqueeze(0)
-                    return (mri_tensors, torch.zeros((1, 1)), torch.zeros((1, 1)), label, event_time, c, slide_ids) 
+        elif self.mode =='radio_2.5D':
+            mri_tensors = self.load_mri_2_5D(case_id)
+            mri_tensors = mri_tensors.unsqueeze(0)
+            return_values = (mri_tensors, torch.zeros((1, 1)), torch.zeros((1, 1)), label, event_time,  c, slide_ids)
+            return return_values
 
-                elif self.mode =='radio_2.5D':
-                    mri_tensors = self.load_mri_2_5D(case_id)
-                    mri_tensors = mri_tensors.unsqueeze(0)
-                    return_values = (mri_tensors, torch.zeros((1, 1)), torch.zeros((1, 1)), label, event_time,  c, slide_ids)
-                    return return_values
 
-                elif self.mode == 'pathomic':
-                    path_features = []
-                    for slide_id in slide_ids:
-                        wsi_path = os.path.join(data_dir, 'pt_files', '{}.pt'.format(slide_id.rstrip('.svs')))
-                        wsi_bag = torch.load(wsi_path)
-                        path_features.append(wsi_bag)
-                    path_features = torch.cat(path_features, dim=0)
-                    genomic_features = torch.tensor(self.genomic_features.iloc[idx])
-                    return (torch.zeros((1,1)) , path_features, genomic_features.unsqueeze(dim=0), label, event_time, c, slide_ids)
-                
-                elif self.mode =='radiomic':
-                    mri_tensors = self.load_mri2(case_id)
-                    mri_tensors = mri_tensors
-                    # mri_tensors = mri_tensors.permute(1, 2, 0) # for healnet
-                    genomic_features = torch.tensor(self.genomic_features.iloc[idx])
-                    
-                    return (mri_tensors.unsqueeze(0), torch.zeros((1, 1)), genomic_features.unsqueeze(dim=0), label, event_time, c, slide_ids) 
-                
-                elif self.mode =='radiopath':
-                    T1c = self.load_mri(case_id, 'T1c')
-                    T2 = self.load_mri(case_id, 'T2')
-                    FLAIR = self.load_mri(case_id, 'Flair')
-                    mask = self.load_mri(case_id, 'mask')
-                    mri_tensors = torch.stack([T1c, T2, FLAIR, mask], dim=0)
-                    mri_tensors = mri_tensors.unsqueeze(0)
-                    
-                    path_features = []
-                    for slide_id in slide_ids:
-                        wsi_path = os.path.join(data_dir, 'pt_files', '{}.pt'.format(slide_id.rstrip('.svs')))
-                        wsi_bag = torch.load(wsi_path)
-                        path_features.append(wsi_bag)
-                    path_features = torch.cat(path_features, dim=0)
+        elif self.mode =='radio_3D':
+            T1 = self.load_mri_3D(case_id, 'T1')
+            T2 = self.load_mri_3D(case_id, 'T2')
+            FLAIR = self.load_mri_3D(case_id, 'Flair')
+            # Stack MRI images as channels
+            mri_tensors = torch.stack([ T2, FLAIR], dim=0)
+            # mri_tensors = torch.stack([T1c, T2, FLAIR], dim=0)
+            mri_tensors = mri_tensors.unsqueeze(0)
+            return (mri_tensors, torch.zeros((1, 1)), torch.zeros((1, 1)), label, event_time, c, slide_ids) 
 
-                    return (mri_tensors, path_features, torch.zeros((1, 1)), label, event_time, c, slide_ids) 
-                
-                elif self.mode =='radiopathomics':
-                    mri_tensors = self.load_mri2(case_id)
-                    mri_tensors = mri_tensors.unsqueeze(0)
-                    
-                    path_features = []
-                    for slide_id in slide_ids:
-                        wsi_path = os.path.join(data_dir, 'pt_files', '{}.pt'.format(slide_id.rstrip('.svs')))
-                        wsi_bag = torch.load(wsi_path)
-                        path_features.append(wsi_bag)
-                    path_features = torch.cat(path_features, dim=0)
+        elif self.mode =='radiomic1D':
+            radiomics_features = self.get_radiomics_1D(case_id)
+            genomic_features = torch.tensor(self.genomic_features.iloc[idx])
+            return_values= (radiomics_features.unsqueeze(0), torch.zeros((1,1)),  genomic_features.unsqueeze(dim=0), label, event_time, c, slide_ids)
 
-                    genomic_features = torch.tensor(self.genomic_features.iloc[idx])
-
-                    return (mri_tensors, path_features, genomic_features.unsqueeze(dim=0), label, event_time, c, slide_ids) 
+            return return_values
+            
+        return (mri_tensors.unsqueeze(0), torch.zeros((1, 1)), genomic_features.unsqueeze(dim=0), label, event_time, c, slide_ids) 
+        
 
 def get_radiomics_scaler(df):
     """Get scaler fitted on radiomics DataFrame"""
@@ -612,3 +559,27 @@ def save_splits( split_iter, case_id_array, out_dir="data/splits"):
         df = pd.DataFrame({"train": pd.Series(train_ids, dtype="string")})
         df["val"] = pd.Series(val_ids, dtype="string")  # pads shorter col with NA
         df.to_csv(out / f"split_{i}.csv", index=False)
+
+
+def create_dataset(args):
+    """Create dataset based on task and mode"""
+    
+    # Determine label column based on task
+    label_col = "survival" if args.task == "risk" else "type"
+    dataset = Generic_MIL_Dataset(
+        csv_path=args.csv,
+        mode=args.mode,
+        path_dir=args.path_dir,
+        mri_dir=args.mri_dir,
+        task=args.task,
+        shuffle=False,
+        seed=args.seed,
+        print_info=True,
+        create_split=args.create_split,
+        n_splits=args.k,
+        patient_strat=False,
+        n_bins=args.n_classes,
+        label_col=label_col
+    )
+    
+    return dataset
