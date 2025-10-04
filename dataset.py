@@ -120,9 +120,13 @@ class Generic_Dataset(Dataset):
             self.slide_data = slide_data
     
                         # metadata columns (first 12 cols, usually non-feature data)
+            # metadata = [
+            #     'Unnamed: 0', 'case_id', 'label', 'slide_id',
+            #     'type', 'age', 'gender', 'survival', 'censorship', 'PatientID'
+            # ]
             metadata = [
                 'Unnamed: 0', 'case_id', 'label', 'slide_id',
-                'type', 'age', 'gender', 'survival', 'censorship', 'PatientID'
+                'type', 'age', 'gender', 'survival', 'censorship'
             ]
 
         # ----------------------
@@ -195,9 +199,13 @@ class Generic_Dataset(Dataset):
             self.slide_data = slide_data
 
                         # metadata columns (first 12 cols, usually non-feature data)
+            # metadata = [
+            #         'disc_label', 'Unnamed: 0', 'case_id', 'label', 'slide_id',
+            #         'type', 'age', 'gender', 'survival', 'censorship', "PatientID"
+            #     ]
             metadata = [
                     'disc_label', 'Unnamed: 0', 'case_id', 'label', 'slide_id',
-                    'type', 'age', 'gender', 'survival', 'censorship', "PatientID"
+                    'type', 'age', 'gender', 'survival', 'censorship'
                 ]
          # ---- store final dataframes ----
 
@@ -325,6 +333,10 @@ class Generic_MIL_Dataset(Generic_Dataset):
         self.iso_spacing = iso_spacing
         self.use_h5 = False
         self.genomic_features = self.slide_data.drop(self.metadata, axis=1)
+        
+        if self.mode.startswith("radio"):  # e.g., radio_1D, radio_2.5D, radio_3D
+            self.genomic_features = pd.DataFrame()  # no omic features in radiology-only
+
         print('Mode is ', self.mode)
         print(self.genomic_features.shape)
 
@@ -591,10 +603,14 @@ class Generic_Split(Generic_MIL_Dataset):
 
 
     def get_scaler(self):
+        if self.genomic_features is None or self.genomic_features.empty:
+            return None
         scaler_omic = StandardScaler().fit(self.genomic_features)
         return (scaler_omic,)
 
     def apply_scaler(self, scalers: tuple=None):
+        if scalers is None or self.genomic_features is None or self.genomic_features.empty:
+            return
         transformed = pd.DataFrame(scalers[0].transform(self.genomic_features))
         transformed.columns = self.genomic_features.columns
         self.genomic_features = transformed

@@ -78,6 +78,7 @@ def train(datasets: tuple, cur: int, args):
             in_ch = x_mri.size(1)
         n_out = args.n_classes  # risk: #bins ; subtype: #classes
         model = MRI3DHead(in_ch=in_ch, task=args.task, n_bins_or_classes=n_out)
+        model = model.to(args.device)
 
     print('\nInit optimizer ...', end=' ')
     optimizer = get_optim(model, args)
@@ -180,6 +181,16 @@ def train_loop(epoch, model, loader, optimizer, loss_fn, args, gc=16):
     for batch_idx, batch in enumerate(pbar):
         data_MRI, data_WSI, data_omic, y_disc, event_time, censor, slide_ids = batch
 
+        # move to GPU
+        data_MRI = data_MRI.to(args.device)
+        if data_WSI is not None: 
+            data_WSI = data_WSI.to(args.device)
+        if data_omic is not None: 
+            data_omic = data_omic.to(args.device)
+        y_disc = y_disc.to(args.device)
+        event_time = event_time.to(args.device)
+        censor = censor.to(args.device)
+
         # Forward
         h = model(x_path=data_WSI, x_omic=data_omic, x_mri=data_MRI)
 
@@ -271,6 +282,15 @@ def validate(cur, epoch, model, loader, loss_fn, args, gc=16):
 
     pbar = tqdm(loader, total=len(loader), desc=f"Valid | epoch {epoch}", leave=False)
     for batch_idx, (data_MRI, data_WSI, data_omic, y_disc, event_time, censor, slide_ids) in enumerate(pbar):
+        data_MRI = data_MRI.to(args.device, non_blocking=True)
+        if data_WSI is not None:
+            data_WSI = data_WSI.to(args.device, non_blocking=True)
+        if data_omic is not None and (not (isinstance(data_omic, torch.Tensor) and data_omic.numel() == 0)):
+            data_omic = data_omic.to(args.device, non_blocking=True)
+        y_disc = y_disc.to(args.device, non_blocking=True)
+        event_time = event_time.to(args.device, non_blocking=True)
+        censor = censor.to(args.device, non_blocking=True)
+
         h = model(x_path=data_WSI, x_omic=data_omic, x_mri=data_MRI)
 
         if isinstance(loss_fn, NLLSurvLoss):

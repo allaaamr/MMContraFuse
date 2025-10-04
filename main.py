@@ -134,6 +134,8 @@ parser.add_argument('--create_split',    action='store_true', default=False)
 
 args = parser.parse_args()
 device=torch.device("cuda" if torch.cuda.is_available() else "cpu")
+args.device = device
+print("Device being used:", device)
 
 
 ### Sets Seed for reproducible experiments.
