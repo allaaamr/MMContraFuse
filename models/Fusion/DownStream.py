@@ -20,7 +20,7 @@ class DownstreamModel(nn.Module):
                 param.requires_grad = False
         
         # Get the embedding dimension from ContRG
-        embedding_dim = contrg_model.fusion_dim
+        embedding_dim = contrg_model.projection_dim
         
         # Classification/regression head
         self.classifier = nn.Sequential(

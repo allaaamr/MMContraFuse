@@ -2,10 +2,11 @@ from argparse import Namespace
 from collections import OrderedDict
 import matplotlib.pyplot as plt
 from lifelines.utils import concordance_index
+from models.Fusion.DownStream import DownstreamModel
 import numpy as np
 from sksurv.metrics import concordance_index_censored
 import torch
-from dataset import save_splits
+from data.dataset import save_splits
 from models.Encoder.genomic import SNN
 from models.Encoder.radiomics_1D import Radiomics1DNet
 from utils.utils import *
@@ -50,9 +51,9 @@ def train(datasets: tuple, cur: int, args):
     print('Done!')
     sys.stdout.flush()
 
-    best_val_metric = -float('inf') if args.task == 'risk' else 0.0
-    patience_counter = 0
-    patience = args.patience
+    # best_val_metric = -float('inf') if args.task == 'risk' else 0.0
+    # patience_counter = 0
+    # patience = args.patience
 
     train_metrics, val_metrics = [], []
     train_losses,  val_losses  = [],  []
@@ -140,7 +141,7 @@ def train_loop(epoch, model, loader, optimizer, loss_fn, args, gc=16):
             cls_logits.append(h.detach().cpu())
             cls_targets.append(y_disc.detach().cpu())
 
-        # Bookkeeping
+
         loss_main_sum  += loss_value
         loss_total_sum += loss_value 
 

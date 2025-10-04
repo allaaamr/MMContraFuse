@@ -1,4 +1,6 @@
+import os
 import pickle
+from models.Fusion.ContRG import ContRGModel
 import numpy as np
 import pdb
 import math
@@ -15,6 +17,7 @@ from itertools import islice
 import matplotlib.pyplot as plt
 
 
+    
 def pickle_obj(obj, path):
     with open(path, 'wb') as f:
         pickle.dump(obj, f)
@@ -38,7 +41,8 @@ def get_split_loader(split_dataset, training = False, testing = False, weighted 
             else:
                 loader = DataLoader(split_dataset, batch_size=batch_size, sampler = RandomSampler(split_dataset), collate_fn = collate, **kwargs)
         else:
-            loader = DataLoader(split_dataset, batch_size=1, sampler = SequentialSampler(split_dataset), collate_fn = collate, **kwargs)
+            loader = DataLoader(split_dataset, batch_size=batch_size, sampler = SequentialSampler(split_dataset), collate_fn = collate, **kwargs)
+      
     
     else:
         ids = np.random.choice(np.arange(len(split_dataset), int(len(split_dataset)*0.1)), replace = False)
@@ -91,9 +95,6 @@ def collate_MIL(batch):
     slide_ids = [item[6] for item in batch]
     return [mri, img, omic, label, event_time, c, slide_ids]
 
-
-
-
 def generate_stratified_kfold(cls_ids, samples, n_splits=5, seed=7):
     """
     Stratified K-fold over indices specified per-class in `cls_ids`.
@@ -127,8 +128,9 @@ def generate_stratified_kfold(cls_ids, samples, n_splits=5, seed=7):
         train_idx = sorted(np.setdiff1d(all_indices, val_idx))
         yield train_idx, val_idx
 
-
 def generate_split(cls_ids, samples, n_splits=5, seed=7, val_percent=0.2):
+
+
     """
     Generate train/validation splits with class-wise sampling.
     Ensures total validation set is val_percent of dataset,
@@ -179,3 +181,28 @@ def generate_split(cls_ids, samples, n_splits=5, seed=7, val_percent=0.2):
 
         # yield the current split (sorted for consistency)
         yield sorted(sampled_train_ids), sorted(all_val_ids)
+
+def load_contrg_from_ckpt(args, ckpt_path):
+    if not os.path.isfile(ckpt_path):
+        raise FileNotFoundError(f"ContRG checkpoint not found: {ckpt_path}")
+
+    # Construct the model with the SAME dims used during training
+    model = ContRGModel(
+        omic_input_dim=args.omic_input_dim,
+        radio_type='1D',                      # adjust if needed
+        genomics_output_dim=args.genomics_output_dim,
+        radiomics_output_dim=args.radiomics_output_dim,
+        projection_dim=args.projection_dim,
+        temperature=args.temperature,
+        learning_rate=args.lr,                # not used for downstream if frozen
+        weight_decay=args.reg,
+        max_epochs=args.max_epochs,
+    )
+
+    state = torch.load(ckpt_path, map_location='cpu')
+    missing, unexpected = model.load_state_dict(state, strict=False)
+    if missing or unexpected:
+        print(f"[WARN] load_state_dict: missing={missing}, unexpected={unexpected}")
+
+    model.eval()
+    return model

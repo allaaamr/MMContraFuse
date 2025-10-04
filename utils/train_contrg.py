@@ -2,20 +2,20 @@
 import torch
 import pytorch_lightning as pl
 from models.Encoder.genomic import SNN
-from models.Fusion import ContRG
+from models.Fusion.ContRG import ContRGModel
 
-def train_contig(train_loader, val_loader=None, **kwargs):
+def train_contig(train_loader, val_loader, **kwargs):
     """
     Main training function following ContIG approach
     
     Args:
         train_loader: DataLoader with dict containing 'genomics' and 'radiomics'
-        val_loader: Optional validation DataLoader
+        val_loader:  validation DataLoader
         **kwargs: Additional arguments for ContIGModel
     """
     
     # Initialize ContRG model
-    model = ContRG(
+    model = ContRGModel(
         **kwargs
     )
     

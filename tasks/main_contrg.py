@@ -4,10 +4,8 @@ import argparse
 import os
 import sys
 from timeit import default_timer as timer
-
 import numpy as np
 import pandas as pd
-
 
 from data.dataset import Generic_MIL_Dataset
 from utils.utils import *
@@ -19,6 +17,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.data import DataLoader, sampler
 
+from utils.downstream import *
 import warnings
 warnings.filterwarnings("ignore", category=FutureWarning)
 
@@ -48,11 +47,9 @@ def main(args):
 
     model, cindex_latest, val_loader, train_loader = train(datasets,0, args)
 
-    
-    # pretrain_dataset = MultimodalDataset(genomics_data, radiomics_data)
-    # pretrain_loader = DataLoader(pretrain_dataset, batch_size=32, shuffle=True)
-    
-    # Train ContIG
+
+ 
+    # Train ContRG
     contig_model = train_contig(
         train_loader= train_loader,
         genomics_input_dim = args.omic_input_dim,
@@ -71,18 +68,18 @@ def main(args):
 
 
     
-    # Evaluate on downstream task
-    classifier, best_acc = evaluate_downstream_task(
-        contig_model=contig_model,
-        train_loader=train_loader,
-        val_loader=val_loader,  # Use separate val set in practice
-        num_classes=3,
-        task_type='classification',
-        freeze_encoder=True,  # Linear probing
-        num_epochs=args.max_epochs
-    )
+    # # Evaluate on downstream task
+    # classifier, best_acc = evaluate_downstream_task(
+    #     contig_model=contig_model,
+    #     train_loader=train_loader,
+    #     val_loader=val_loader,  # Use separate val set in practice
+    #     num_classes=3,
+    #     task_type='classification',
+    #     freeze_encoder=True,  # Linear probing
+    #     num_epochs=args.max_epochs
+    # )
     
-    print(f"\nBest downstream task accuracy: {best_acc:.2f}%")
+    # print(f"\nBest downstream task accuracy: {best_acc:.2f}%")
 
 
 parser = argparse.ArgumentParser(description='Configurations for ContRG')
