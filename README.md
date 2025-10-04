@@ -115,11 +115,11 @@ python main.py --mode genomic --task subtype --csv cna_177_patients.csv
 python main.py --mode radio_1D --task subtype 
 ```
 
-### Multi-Modal Fusion 
+# Multi-Modal Fusion 
 ## Contrastive Fusion Architecture Explanation
 The contrastive fusion approach implements the ContIG (Contrastive learning for Imaging and Genetics) methodology, which learns joint representations between genomic and radiological data through self-supervised contrastive learning. Here's how each component works:
 
-# 1  #ConrRG: Core Contrastive Model for Radiology & Genomics
+### 1  #ConrRG: Core Contrastive Model for Radiology & Genomics
 path:
 ```bash
 models/Fusion/ContRG.py
@@ -131,7 +131,7 @@ This is the heart of the contrastive learning system. It implements:
 -Contrastive Loss (InfoNCE): Treats paired genomic-radiomic data from the same patient as positive pairs, and all other combinations in the batch as negative pairs. ---The loss pulls positive pairs together while pushing negative pairs apart
 -Bidirectional Learning: Computes loss in both directions (genomics→radiomics and radiomics→genomics) for symmetric learning
 
-# 2 Downstream Task Adapter
+### 2 Downstream Task Adapter
 path:
 ```bash
  utils/downstream.py
@@ -143,14 +143,14 @@ Handles the complete downstream evaluation workflow:
 -Comparison Modes: Evaluates both linear probing (frozen encoders) and fine-tuning to assess representation quality
 -Visualization: Creates plots comparing training/validation metrics and losses
 
-# 3 Contrastive Pre-training
+### 3 Contrastive Pre-training
 path:
 ```bash
 utils/train_contrg.py
 ```
 Manages the self-supervised pre-training phase
 
-# 4 Unified Training Interface
+### 4 Unified Training Interface
 path:
 ```bash
 main.py
