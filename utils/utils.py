@@ -184,22 +184,33 @@ def generate_split(cls_ids, samples, n_splits=5, seed=7, val_percent=0.2):
         # yield the current split (sorted for consistency)
         yield sorted(sampled_train_ids), sorted(all_val_ids)
 
-def load_contrg_from_ckpt(args, ckpt_path):
+def load_contrg_from_ckpt(config, ckpt_path):
     if not os.path.isfile(ckpt_path):
         raise FileNotFoundError(f"ContRG checkpoint not found: {ckpt_path}")
 
-    # Construct the model with the SAME dims used during training
     model = ContRGModel(
-        omic_input_dim=args.omic_input_dim,
-        radio_type='1D',                      # adjust if needed
-        genomics_output_dim=args.genomics_output_dim,
-        radiomics_output_dim=args.radiomics_output_dim,
-        projection_dim=args.projection_dim,
-        temperature=args.temperature,
-        learning_rate=args.lr,                # not used for downstream if frozen
-        weight_decay=args.reg,
-        max_epochs=args.max_epochs,
+        omic_input_dim=config['omic_input_dim'],
+        radio_input_dim=config['radio_input_dim'],
+        genomics_output_dim=config.get('genomics_output_dim', 256),
+        radiomics_output_dim=config.get('radiomics_output_dim', 64),
+        projection_dim=config.get('projection_dim', 128),
+        temperature=config.get('temperature', 0.1),
+        radio_type=config.get('radio_type', '1D'),
+        learning_rate=config.get('learning_rate', 1e-3),
+        weight_decay=config.get('weight_decay', 1e-6),
+        max_epochs=config.get('max_epochs', 100)
     )
+            # model = ContRGModel(
+    #     omic_input_dim=args.omic_input_dim,
+    #     radio_type='1D',                     
+    #     genomics_output_dim=args.genomics_output_dim,
+    #     radiomics_output_dim=args.radiomics_output_dim,
+    #     projection_dim=args.projection_dim,
+    #     temperature=args.temperature,
+    #     learning_rate=args.lr,                
+    #     weight_decay=args.reg,
+    #     max_epochs=args.max_epochs,
+    # )
 
     state = torch.load(ckpt_path, map_location='cpu')
     missing, unexpected = model.load_state_dict(state, strict=False)
