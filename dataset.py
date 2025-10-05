@@ -10,6 +10,30 @@ from torch.utils.data import Dataset
 from sklearn.model_selection import train_test_split
 from utils.utils import *
 
+def _get_case_id_series(df: pd.DataFrame) -> pd.Series:
+    """Return a string Series of case_ids regardless of whether they live in a column or the index."""
+    if 'case_id' in df.columns:
+        s = df['case_id'].astype(str)
+    else:
+        s = pd.Series(df.index.astype(str), index=df.index, name='case_id')
+    return s
+
+def _norm_id(x: str) -> str:
+    s = str(x)
+    if s.endswith(".npy"):
+        s = s[:-4]
+    if s.upper().startswith("TCGA"):
+        return s[:12]
+    return s
+
+def _select_numeric_feature_cols(df: pd.DataFrame, metadata: list) -> list:
+    """Return numeric columns for omics (exclude metadata and ID-ish columns)."""
+    drop = set(metadata) | {'case_id', 'case_id_norm', 'slide_id'}
+    cand = [c for c in df.columns if c not in drop]
+    # keep only numeric dtypes
+    num_cols = df[cand].select_dtypes(include=[np.number]).columns.tolist()
+    return num_cols
+
 class Generic_Dataset(Dataset):
     def __init__(self,
         csv_path = 'cna_clinical.csv',
@@ -67,8 +91,18 @@ class Generic_Dataset(Dataset):
         self.label_col = label_col
         # ---- load CSV ----
         slide_data = pd.read_csv(csv_path, low_memory=False)
-        self.slide_data =slide_data
+        self.slide_data = slide_data
         slide_data = slide_data.dropna(subset=["survival", "censorship"]).copy()
+        # Normalize IDs on all relevant columns
+        if "case_id" not in slide_data.columns:
+            raise ValueError("CSV must contain a 'case_id' column")
+
+        slide_data["case_id_norm"] = _get_case_id_series(slide_data).map(_norm_id)
+
+        # If slide_id exists, keep as-is but we will map per-case via patient_dict
+
+        # We'll carry both: raw case_id (for filenames if they already match)
+        # and case_id_norm (for omics indexing)
 
         
         # optional shuffle
@@ -88,19 +122,33 @@ class Generic_Dataset(Dataset):
             # build dictionary: patient_id -> all slide_ids (because a single patient can have multiple slides)
             patient_dict = {}
             slide_data = slide_data.set_index('case_id')
-            for patient in patients_df['case_id']:
-                slide_ids = slide_data.loc[patient, 'slide_id']
+
+            # Build a normalized-index view safely (case_id may be an index now)
+            slide_data_norm = slide_data.copy()
+            slide_data_norm.index = _get_case_id_series(slide_data_norm).map(_norm_id)
+
+            patient_dict = {}
+            for _, row in patients_df.iterrows():
+                raw_id = row["case_id"]
+                nid = _norm_id(raw_id)
+                # robust: prefer norm-indexed lookups
+                try:
+                    slide_ids = slide_data_norm.loc[nid, 'slide_id']
+                except KeyError:
+                    # fallback: try raw
+                    slide_ids = slide_data.loc[raw_id, 'slide_id']
                 if isinstance(slide_ids, str):
                     slide_ids = np.array(slide_ids).reshape(-1)
                 else:
                     slide_ids = slide_ids.values
-                patient_dict.update({patient:slide_ids})
-
+                patient_dict[nid] = slide_ids  # <<< use normalized key
             self.patient_dict = patient_dict
         
-            slide_data = patients_df
+            slide_data = patients_df.copy()
             slide_data.reset_index(drop=True, inplace=True)
             slide_data = slide_data.assign(slide_id=slide_data['case_id'])
+            slide_data["case_id_norm"] = _get_case_id_series(slide_data).map(_norm_id)
+
 
 
             # assign final integer labels to each row 
@@ -146,19 +194,33 @@ class Generic_Dataset(Dataset):
             # build dictionary: patient_id -> all slide_ids (because a single patient can have multiple slides)
             patient_dict = {}
             slide_data = slide_data.set_index('case_id')
-            for patient in patients_df['case_id']:
-                slide_ids = slide_data.loc[patient, 'slide_id']
+
+            # Build a normalized-index view safely (case_id may be an index now)
+            slide_data_norm = slide_data.copy()
+            slide_data_norm.index = _get_case_id_series(slide_data_norm).map(_norm_id)
+
+            patient_dict = {}
+            for _, row in patients_df.iterrows():
+                raw_id = row["case_id"]
+                nid = _norm_id(raw_id)
+                # robust: prefer norm-indexed lookups
+                try:
+                    slide_ids = slide_data_norm.loc[nid, 'slide_id']
+                except KeyError:
+                    # fallback: try raw
+                    slide_ids = slide_data.loc[raw_id, 'slide_id']
                 if isinstance(slide_ids, str):
                     slide_ids = np.array(slide_ids).reshape(-1)
                 else:
                     slide_ids = slide_ids.values
-                patient_dict.update({patient:slide_ids})
-
+                patient_dict[nid] = slide_ids  # <<< use normalized key
             self.patient_dict = patient_dict
         
-            slide_data = patients_df
+            slide_data = patients_df.copy()
             slide_data.reset_index(drop=True, inplace=True)
             slide_data = slide_data.assign(slide_id=slide_data['case_id'])
+            slide_data["case_id_norm"] = _get_case_id_series(slide_data).map(_norm_id)
+
 
             # build label_dict = (bin, censorship) → class_id
             label_dict = {}
@@ -199,7 +261,16 @@ class Generic_Dataset(Dataset):
          # ---- store final dataframes ----
 
         self.metadata = metadata
-        self.genomic_features = self.slide_data.drop(self.metadata, axis=1)
+
+        # Ensure we have a normalized ID column
+        self.slide_data["case_id_norm"] = _get_case_id_series(self.slide_data).map(_norm_id)
+
+        # Pick only numeric omics feature columns
+        self.omic_cols = _select_numeric_feature_cols(self.slide_data, self.metadata)
+
+        # Genomic features: numeric only, indexed by normalized ID for reliable .loc lookups
+        self.genomic_features = self.slide_data[self.omic_cols].copy()
+        self.genomic_features.index = self.slide_data["case_id_norm"].astype(str).values
         self.mode = mode
         self.cls_ids_prep()
         self.patient_data_prep()
@@ -274,9 +345,18 @@ class Generic_Dataset(Dataset):
         df_val_slice = self.slide_data[mask].reset_index(drop=True)
         print('df_val_slice ' ,df_val_slice.shape)
 
-        train = Generic_Split(df_train_slice, metadata=self.metadata, mode=self.mode, mri_data_dir = self.mri_data_dir, data_dir=self.data_dir, label_col=self.label_col, patient_dict=self.patient_dict, num_classes=self.num_classes)
-        val = Generic_Split(df_val_slice, metadata=self.metadata, mode=self.mode, mri_data_dir = self.mri_data_dir,  data_dir=self.data_dir, label_col=self.label_col, patient_dict=self.patient_dict, num_classes=self.num_classes)
+        df_train_slice["case_id_norm"] = _get_case_id_series(df_train_slice).map(_norm_id)
+        df_val_slice["case_id_norm"]   = _get_case_id_series(df_val_slice).map(_norm_id)
 
+        # Build split objects
+        train = Generic_Split(df_train_slice, metadata=self.metadata, mode=self.mode,
+                            mri_data_dir=self.mri_data_dir, data_dir=self.data_dir,
+                            label_col=self.label_col, patient_dict=self.patient_dict,
+                            num_classes=self.num_classes)
+        val   = Generic_Split(df_val_slice, metadata=self.metadata, mode=self.mode,
+                            mri_data_dir=self.mri_data_dir, data_dir=self.data_dir,
+                            label_col=self.label_col, patient_dict=self.patient_dict,
+                            num_classes=self.num_classes)
         print("****** Normalizing Data ******")
         scalers = train.get_scaler()
         train.apply_scaler(scalers=scalers)
@@ -346,117 +426,79 @@ class Generic_MIL_Dataset(Generic_Dataset):
 
     def load_mri_2_5D(self, case_id):
         """
-        Args:
-            case_id (string): ID of the patient.
-        Returns:
-            a numpy array containing 32 slices, 8 slice per each MRI scan
+        Returns a [S,H,W] float32 torch tensor.
+        Resolves the path by normalized id; falls back to <case_id>.npy.
         """
-        path = os.path.join(self.mri_data_dir, case_id+".npy")
-        img = np.load(path , allow_pickle=True)
-        img -= np.mean(img, keepdims=True)
-        img /= np.std(img, keepdims=True)
-        img = torch.as_tensor(img).float()
-        # slices_to_keep = [3, 4, 5, 27, 28, 29]
-        # img = img[slices_to_keep, :, :]  # Shape: (12, 256, 256)
-        return img
+        nid = _norm_id(case_id)
+        path = self._mri_map.get(nid, None)
+        if path is None:
+            # fallback to raw layout
+            raw = os.path.join(self.mri_data_dir, case_id + ".npy")
+            path = raw if os.path.isfile(raw) else None
+        if path is None:
+            raise FileNotFoundError(f"MRI .npy not found for case_id={case_id} (nid={nid}) in {self.mri_data_dir}")
+
+        img = np.load(path, allow_pickle=True)
+        # ensure [S,H,W]
+        if img.ndim == 4:
+            img = np.squeeze(img)
+        if img.ndim == 2:
+            img = img[None, ...]
+        if img.ndim != 3:
+            raise ValueError(f"Unexpected MRI shape {img.shape} at {path}")
+
+        img = img.astype(np.float32)
+        img -= img.mean(keepdims=True)
+        std = img.std(keepdims=True)
+        if (std == 0).any():
+            # avoid divide-by-zero; keep zeros
+            pass
+        else:
+            img /= std
+        return torch.from_numpy(img)
+
     
     def load_from_h5(self, toggle):
         self.use_h5 = toggle
 
     def __getitem__(self, idx):
-        case_id = self.slide_data['case_id'][idx]
+        case_id = str(self.slide_data['case_id'][idx])
+        nid = _norm_id(case_id)
+
+        # handle label/censoring as you already do...
         event_time = torch.Tensor([self.slide_data[self.label_col][idx]])
         if self.label_col == "survival":
             label = torch.Tensor([self.slide_data['disc_label'][idx]])
             c = torch.Tensor([self.slide_data['censorship'][idx]])
         else:
             label = self.slide_data['label'][idx]
-            c= torch.Tensor(1)
-        slide_ids = self.patient_dict[case_id]
+            c = torch.Tensor([1.0])  # or 1.0, but keep tensor shape consistency
 
+        # slide ids via normalized key
+        slide_ids = self.patient_dict.get(nid, None)
+        if slide_ids is None:
+            # fallback: try raw key
+            slide_ids = self.patient_dict.get(_norm_id(case_id), [])
+            if slide_ids is None:
+                slide_ids = []
 
-        data_dir = self.data_dir
-        
-        if self.data_dir:
-                if self.mode == 'path':
-                    path_features = []
-                    for slide_id in slide_ids:
-                        wsi_path = os.path.join(data_dir, 'pt_files', '{}.pt'.format(slide_id.rstrip('.svs')))
-                        wsi_bag = torch.load(wsi_path)
-                        path_features.append(wsi_bag)
-                    path_features = torch.cat(path_features, dim=0) 
-                    return_values =torch.zeros((1,1)), path_features, torch.zeros((1,1)), label, event_time, c,slide_ids
-                    return return_values
+        # --- MRI branch ---
+        if self.mode == 'radio_2.5D':
+            mri_tensors = self.load_mri_2_5D(case_id)  # loader resolves via nid internally
+            mri_tensors = mri_tensors.unsqueeze(0)     # [1,S,H,W]
+            return (mri_tensors, torch.zeros((1, 1)), torch.zeros((1, 1)), label, event_time,  c, slide_ids)
 
-                elif self.mode == 'genomic':
-                    genomic_features = torch.tensor(self.genomic_features.iloc[idx])
-                    return (torch.zeros((1,1)), torch.zeros((1,1)), genomic_features.unsqueeze(dim=0), label, event_time, c, slide_ids)
-                
-                elif self.mode =='radio_3D':
-                    T1 = self.load_mri_3D(case_id, 'T1')
-                    T2 = self.load_mri_3D(case_id, 'T2')
-                    FLAIR = self.load_mri_3D(case_id, 'Flair')
-                    # Stack MRI images as channels
-                    mri_tensors = torch.stack([ T2, FLAIR], dim=0)
-                    # mri_tensors = torch.stack([T1c, T2, FLAIR], dim=0)
-                    mri_tensors = mri_tensors.unsqueeze(0)
-                    return (mri_tensors, torch.zeros((1, 1)), torch.zeros((1, 1)), label, event_time, c, slide_ids) 
+        # --- OMIC or fusion branches ---
+        elif self.mode == 'genomic':
+            xomic = torch.tensor(self.genomic_features.loc[nid].to_numpy(dtype=np.float32))
+            return (torch.zeros((1,1)), torch.zeros((1,1)), xomic.unsqueeze(0), label, event_time, c, slide_ids)
 
-                elif self.mode =='radio_2.5D':
-                    mri_tensors = self.load_mri_2_5D(case_id)
-                    mri_tensors = mri_tensors.unsqueeze(0)
-                    return_values = (mri_tensors, torch.zeros((1, 1)), torch.zeros((1, 1)), label, event_time,  c, slide_ids)
-                    return return_values
+        elif self.mode in ('radiomic', 'radiopathomics', 'radiomic2.5D', 'genomic_radio_2.5D'):
+            # example for fusion: MRI + OMIC
+            mri_tensors = self.load_mri_2_5D(case_id).unsqueeze(0)
+            xomic = torch.tensor(self.genomic_features.loc[nid].to_numpy(dtype=np.float32))
+            return (mri_tensors, torch.zeros((1,1)), xomic.unsqueeze(0), label, event_time, c, slide_ids)
 
-                elif self.mode == 'pathomic':
-                    path_features = []
-                    for slide_id in slide_ids:
-                        wsi_path = os.path.join(data_dir, 'pt_files', '{}.pt'.format(slide_id.rstrip('.svs')))
-                        wsi_bag = torch.load(wsi_path)
-                        path_features.append(wsi_bag)
-                    path_features = torch.cat(path_features, dim=0)
-                    genomic_features = torch.tensor(self.genomic_features.iloc[idx])
-                    return (torch.zeros((1,1)) , path_features, genomic_features.unsqueeze(dim=0), label, event_time, c, slide_ids)
-                
-                elif self.mode =='radiomic':
-                    mri_tensors = self.load_mri2(case_id)
-                    mri_tensors = mri_tensors
-                    # mri_tensors = mri_tensors.permute(1, 2, 0) # for healnet
-                    genomic_features = torch.tensor(self.genomic_features.iloc[idx])
-                    
-                    return (mri_tensors.unsqueeze(0), torch.zeros((1, 1)), genomic_features.unsqueeze(dim=0), label, event_time, c, slide_ids) 
-                
-                elif self.mode =='radiopath':
-                    T1c = self.load_mri(case_id, 'T1c')
-                    T2 = self.load_mri(case_id, 'T2')
-                    FLAIR = self.load_mri(case_id, 'Flair')
-                    mask = self.load_mri(case_id, 'mask')
-                    mri_tensors = torch.stack([T1c, T2, FLAIR, mask], dim=0)
-                    mri_tensors = mri_tensors.unsqueeze(0)
-                    
-                    path_features = []
-                    for slide_id in slide_ids:
-                        wsi_path = os.path.join(data_dir, 'pt_files', '{}.pt'.format(slide_id.rstrip('.svs')))
-                        wsi_bag = torch.load(wsi_path)
-                        path_features.append(wsi_bag)
-                    path_features = torch.cat(path_features, dim=0)
-
-                    return (mri_tensors, path_features, torch.zeros((1, 1)), label, event_time, c, slide_ids) 
-                
-                elif self.mode =='radiopathomics':
-                    mri_tensors = self.load_mri2(case_id)
-                    mri_tensors = mri_tensors.unsqueeze(0)
-                    
-                    path_features = []
-                    for slide_id in slide_ids:
-                        wsi_path = os.path.join(data_dir, 'pt_files', '{}.pt'.format(slide_id.rstrip('.svs')))
-                        wsi_bag = torch.load(wsi_path)
-                        path_features.append(wsi_bag)
-                    path_features = torch.cat(path_features, dim=0)
-
-                    genomic_features = torch.tensor(self.genomic_features.iloc[idx])
-
-                    return (mri_tensors, path_features, genomic_features.unsqueeze(dim=0), label, event_time, c, slide_ids) 
                 
 class Generic_Split(Generic_MIL_Dataset):
     def __init__(self, slide_data, metadata, mode, mri_data_dir,
@@ -470,24 +512,46 @@ class Generic_Split(Generic_MIL_Dataset):
         self.label_col = label_col
         self.patient_dict = patient_dict
         self.mri_data_dir = mri_data_dir
-        self.case_ids = self.slide_data['case_id']
-        print('Generic_Split')
+        # Pre-scan .npy files into a map: normalized_id -> path
+        self._mri_map = {}
+        if self.mri_data_dir and os.path.isdir(self.mri_data_dir):
+            for fn in os.listdir(self.mri_data_dir):
+                if fn.endswith(".npy"):
+                    nid = _norm_id(fn)
+                    self._mri_map[nid] = os.path.join(self.mri_data_dir, fn)
+        self.case_ids = self.slide_data['case_id'].astype(str).tolist()
+        self.case_ids_norm = [ _norm_id(x) for x in self.case_ids ]
+        # Ensure we have a normalized ID column
+        self.slide_data["case_id_norm"] = _get_case_id_series(self.slide_data).map(_norm_id)
 
-        self.slide_cls_ids = [[] for i in range(self.num_classes)]
-        for i in range(self.num_classes):
-            self.slide_cls_ids[i] = np.where(self.slide_data['label'] == i)[0]
+        self.omic_cols = _select_numeric_feature_cols(self.slide_data, self.metadata)
 
-        self.genomic_features = self.slide_data.drop(self.metadata, axis=1)
+        # Genomic features: numeric only, indexed by normalized ID for reliable .loc lookups
+        self.genomic_features = self.slide_data[self.omic_cols].copy()
+        self.genomic_features.index = self.slide_data["case_id_norm"].astype(str).values
+        # Ensure labels are ints
+        self.slide_data['label'] = self.slide_data['label'].astype(int)
+        
+        # Per-class index lists used for weighted sampling
+        self.slide_cls_ids = [[] for _ in range(self.num_classes)]
+        labels_np = self.slide_data['label'].to_numpy()
+        for c in range(self.num_classes):
+            idxs = np.where(labels_np == c)[0]
+            self.slide_cls_ids[c] = idxs.tolist()
 
+        # Make sure we can query a sample’s label by index
+        def _getlabel(idx):
+            return int(self.slide_data['label'].iloc[idx])
+        self.getlabel = _getlabel  # bind as method
 
     def get_scaler(self):
-        scaler_omic = StandardScaler().fit(self.genomic_features)
+        scaler_omic = StandardScaler().fit(self.genomic_features.values)
         return (scaler_omic,)
 
     def apply_scaler(self, scalers: tuple=None):
-        transformed = pd.DataFrame(scalers[0].transform(self.genomic_features))
-        transformed.columns = self.genomic_features.columns
-        self.genomic_features = transformed
+        arr = scalers[0].transform(self.genomic_features.values)
+        self.genomic_features.loc[:, self.genomic_features.columns] = arr
+
 
 def save_splits( split_iter, case_id_array, out_dir="data/splits"):
     """

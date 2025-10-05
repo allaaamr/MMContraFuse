@@ -81,7 +81,7 @@ def get_split_loader(split_dataset, training=False, testing=False, weighted=Fals
                 loader = DataLoader(
                     safe_dataset,
                     batch_size=batch_size,
-                    sampler=RandomSampler(split_dataset),
+                    sampler=RandomSampler(safe_dataset),
                     collate_fn=collate,
                     **kwargs
                 )
