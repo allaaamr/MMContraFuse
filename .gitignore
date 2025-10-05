@@ -4,3 +4,6 @@ data/
 results/
 *.ipynb
 wandb/
+lightning_logs/
+*.ckpt
+*.pyc

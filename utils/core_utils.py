@@ -5,7 +5,7 @@ from lifelines.utils import concordance_index
 import numpy as np
 from sksurv.metrics import concordance_index_censored
 import torch
-from dataset import save_splits
+from data.dataset import save_splits
 from models.Encoder.genomic import SNN
 # from models.healnet import HealNet
 # from models.transformer_fusion import TransformerFusion

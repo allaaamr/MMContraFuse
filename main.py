@@ -9,7 +9,7 @@ import numpy as np
 import pandas as pd
 
 
-from dataset import Generic_MIL_Dataset
+from data.dataset import Generic_MIL_Dataset
 from utils.utils import *
 from utils.core_utils import train
 
@@ -156,7 +156,7 @@ seed_torch(args.seed)
 encoding_size = 1024
 
 # Depending on the downstream task the label column to predict is 
-if args.task == "survival":
+if args.task in ["risk", "survival"]:
     label_col = "survival"
     n_bins = args.n_classes
 else:
