@@ -19,8 +19,8 @@ class DownstreamModel(nn.Module):
             for param in self.contrg_model.parameters():
                 param.requires_grad = False
         
-        # Get the embedding dimension from ContRG
-        embedding_dim = contrg_model.projection_dim
+              # Get the embedding dimension from ContRG
+        embedding_dim = contrg_model.get_output_dim()
         
         # Classification/regression head
         self.classifier = nn.Sequential(
@@ -32,7 +32,11 @@ class DownstreamModel(nn.Module):
             nn.Dropout(0.25),
             nn.Linear(128, num_classes)
         )
-    
+
+
+
+        
+        
     def forward(self, x_path=None, x_omic=None, x_mri=None):
         """
         Forward pass matching the signature in core_utils.py

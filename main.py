@@ -167,7 +167,8 @@ def train_contrastive_pipeline(dataset, args):
                 **config,
                 learning_rate=args.lr,
                 weight_decay=args.reg,
-                max_epochs=args.contrastive_epochs  # use the CLI value
+                max_epochs=args.contrastive_epochs,
+                fusion_type = args.fusion_type
             )
             # # Save contrastive model
             save_path = os.path.join(args.results_dir, f"contrg_model_{args.mode}.pt")
@@ -366,6 +367,13 @@ def create_parser():
         '--contrg_ckpt', type=str, default='results/contrg_model_radiomic1D.pt',
         help="Path to a saved ContRG state_dict (.pt) to load when contrg_mode=load"
     )
+    parser.add_argument('--fusion_type', type=str, default='bilinear',
+                    choices=['average', 'weighted_average', 'max', 'min', 
+                            'concatenation', 'hadamard', 'l2_distance',
+                            'bilinear', 'attention', 'gated', 'mlp', 'mfb'],
+                    help='Fusion technique for ablation study')
+    parser.add_argument("--outdir", type=str, default="results/runs/contrg_ablation")
+
     return parser
 
 
