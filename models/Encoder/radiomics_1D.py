@@ -33,7 +33,7 @@ class Radiomics1DNet(nn.Module):
         """Initialize network weights"""
         for module in self.modules():
             if isinstance(module, nn.Linear):
-                nn.init.xavier_normal_(module.weight, gain=0.01)  # Smaller gain
+                nn.init.xavier_normal_(module.weight, gain=0.01)  
                 nn.init.constant_(module.bias, 0)
             elif isinstance(module, nn.LayerNorm):
                 nn.init.constant_(module.weight, 1)

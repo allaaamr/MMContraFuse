@@ -9,7 +9,7 @@ import clip
 import torchvision.models as models
 from models.Encoder.genomic import SNN
 from models.Encoder.radiomics_1D import Radiomics1DNet
-import ContrastiveLoss
+import models.Fusion.ContRG as ContRG
 
 class MultimodalEncoder(nn.Module):
     def __init__(self,
@@ -44,7 +44,7 @@ class MultimodalEncoder(nn.Module):
         )
         
         # Contrastive loss
-        self.contrastive_loss = ContrastiveLoss()
+        self.contrastive_loss = ContRG()
     
     
     def encode_genomics(self, genomics):

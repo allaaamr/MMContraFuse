@@ -33,8 +33,6 @@ def main(args):
     2. Contrastive: Contrastive pre-training + downstream fine-tuning
     """
     
-    dataset = create_dataset(args)
-
 
 
     if args.training_mode == 'contrastive':
@@ -61,11 +59,8 @@ def train_standard_pipeline(dataset, args):
     train_splits = []
     train_loaders = []
     
-    # K-fold cross-validation
-    k_start = 0 if args.k_start == -1 else args.k_start
-    k_end = args.k if args.k_end == -1 else args.k_end
-    
-    for fold in range(k_start, k_end):
+
+    for fold in range(0, 5):
         print(f"\n{'=' * 50}")
         print(f"FOLD {fold + 1}/{args.k}")
         print(f"{'=' * 50}")
@@ -118,7 +113,7 @@ def train_contrastive_pipeline(dataset, args):
     print("=" * 50)
 
     
-    for fold in range(1, 5):
+    for fold in range(0, 5):
         train_dataset, val_dataset = dataset.return_splits(
             csv_path=f'{args.split_dir}/split_{fold}.csv'
         )
@@ -167,11 +162,11 @@ def train_contrastive_pipeline(dataset, args):
                 **config,
                 learning_rate=args.lr,
                 weight_decay=args.reg,
-                max_epochs=args.contrastive_epochs,
+                max_epochs=100,
                 fusion_type = args.fusion_type
             )
             # # Save contrastive model
-            save_path = os.path.join(args.results_dir, f"contrg_model_{args.mode}.pt")
+            save_path = os.path.join(args.results_dir, f"contrg_model_{args.mode}_{args.fusion_type}_split{fold}.pt")
             torch.save(contrg_model.state_dict(), save_path)
             print(f"Saved contrastive model to {save_path}")
         
@@ -282,14 +277,14 @@ def create_parser():
     # Data paths
     parser.add_argument('--path_dir', type=str, 
                        help='Data directory to WSI features')
-    parser.add_argument('--csv', type=str, default="cna_177_patients.csv",
+    parser.add_argument('--csv', type=str, default="mut_cna_177_patients.csv",
                        help='Path to clinical and genomics csv file')
     parser.add_argument('--mri_dir', type=str, default='data/2.5D_MRIs',
                        help='Directory to MRI data')
     parser.add_argument('--split_dir', type=str, default='data/splits',
                        help='Directory containing train/val splits')
     parser.add_argument('--results_dir', type=str, default='./results',
-                       help='Results directory')
+                       help='Results directory')ç
     
     # Task and modality
     parser.add_argument('--task', type=str, choices=['subtype', 'risk'], 
@@ -364,7 +359,7 @@ def create_parser():
     help="train: run contrastive pre-training; load: skip pre-training and use a saved checkpoint"
     )
     parser.add_argument(
-        '--contrg_ckpt', type=str, default='results/contrg_model_radiomic1D.pt',
+        '--contrg_ckpt', type=str, default='/Users/alaa.mohamed/Desktop/MMContraFuse/results/contrg_model_radiomic1D_bilinear_split0.pt',
         help="Path to a saved ContRG state_dict (.pt) to load when contrg_mode=load"
     )
     parser.add_argument('--fusion_type', type=str, default='bilinear',
@@ -377,10 +372,32 @@ def create_parser():
     return parser
 
 
+# Parse arguments
+parser = create_parser()
+args = parser.parse_args()
+
+if args.task == "risk":
+    label_col = "survival"
+    n_bins = args.n_classes
+else:
+	label_col = "type"
+
+dataset = Generic_MIL_Dataset(csv_path = args.csv,
+                                mode = args.mode,
+                                path_dir= args.path_dir,
+                                mri_dir = args.mri_dir,
+                                task = args.task,
+                                shuffle = False, 
+                                seed = args.seed, 
+                                print_info = True,
+                                create_split = args.create_split,    
+                                n_splits = 5,
+                                patient_strat= False,
+                                n_bins=args.n_classes,
+                                label_col = label_col) 
+
 if __name__ == "__main__":
-    # Parse arguments
-    parser = create_parser()
-    args = parser.parse_args()
+
     
     # Setup device
     args.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")

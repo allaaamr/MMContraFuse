@@ -73,7 +73,7 @@ class Generic_Dataset(Dataset):
         # ---- load PyRadiomics ----
         radiomics_csv_path = "data/processed_tabular_data/radio1D_clinical.csv"
         radiomics_df = pd.read_csv(radiomics_csv_path, low_memory=False)
-        radiomics_df.drop(columns=["Unnamed: 0", "type"], inplace=True)
+        radiomics_df.drop(columns=["Unnamed: 0"], inplace=True)
         self.radiomics_features = radiomics_df
         print(f"PyRadiomics features shape: {self.radiomics_features.shape}")
     
@@ -309,8 +309,6 @@ class Generic_Dataset(Dataset):
             # self.radiomics_features = radiomics_normalized_combined
             # print("after norm ", self.radiomics_features.head())
 
-        # In your return_splits method, add this right after splitting:
-
 
         # Check if it exists in the training subset used for scaler fitting:
         if radiomics_train is not None:
@@ -476,7 +474,6 @@ class Generic_MIL_Dataset(Generic_Dataset):
             
         return (mri_tensors.unsqueeze(0), torch.zeros((1, 1)), genomic_features.unsqueeze(dim=0), label, event_time, c, slide_ids) 
         
-
 def get_radiomics_scaler(df):
     """Get scaler fitted on radiomics DataFrame"""
     if df is not None and len(df) > 0:
@@ -576,7 +573,7 @@ def create_dataset(args):
         seed=args.seed,
         print_info=True,
         create_split=args.create_split,
-        n_splits=args.k,
+        n_splits=5,
         patient_strat=False,
         n_bins=args.n_classes,
         label_col=label_col
