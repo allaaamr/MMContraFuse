@@ -20,6 +20,7 @@ from utils.utils import *
 from utils.loss import NLLSurvLoss, CoxPHSurvLoss
 import sys
 import pandas as pd
+import tqdm
 
 
 def train(datasets: tuple, cur: int, args):
@@ -86,6 +87,10 @@ def train(datasets: tuple, cur: int, args):
     else:
         raise ValueError(f"Unsupported mode: {args.mode}")
     
+    model = model.to(args.device)
+
+    use_amp = getattr(args, "amp", True) and args.device.type == "cuda"
+    scaler = torch.cuda.amp.GradScaler(enabled=use_amp)
 
     print('\nInit optimizer ...', end=' ')
     optimizer = get_optim(model, args)
@@ -106,12 +111,12 @@ def train(datasets: tuple, cur: int, args):
     train_metrics, val_metrics = [], []
     train_losses,  val_losses  = [],  []
 
-    for epoch in range(args.max_epochs):
+    for epoch in tqdm.tqdm(range(args.max_epochs)):
         tr_loss_main, tr_loss_total, tr_metric = train_loop(
-            epoch, model, train_loader, optimizer, loss_fn, args
+            epoch, model, train_loader, optimizer, loss_fn, args, scaler=scaler, use_amp=use_amp
         )
         va_loss_main, va_loss_total, va_metric = validate(
-            cur, epoch, model, val_loader, loss_fn, args
+            cur, epoch, model, val_loader, loss_fn, args, use_amp=use_amp
         )
 
         train_metrics.append(tr_metric)
@@ -186,7 +191,7 @@ def train(datasets: tuple, cur: int, args):
 # --------------------
 # TRAIN LOOP 
 # --------------------
-def train_loop(epoch, model, loader, optimizer, loss_fn, args, gc=16):
+def train_loop(epoch, model, loader, optimizer, loss_fn, args, gc=16, scaler=None, use_amp=False):
     model.train()
     loss_main_sum, loss_total_sum = 0.0, 0.0
     n_batches = 0
@@ -199,15 +204,35 @@ def train_loop(epoch, model, loader, optimizer, loss_fn, args, gc=16):
         if batch is None:
             continue
         data_MRI, data_WSI, data_omic, y_disc, event_time, censor, _ = batch
+        data_MRI   = data_MRI.to(args.device, non_blocking=True)
+        data_WSI   = data_WSI.to(args.device, non_blocking=True) if torch.is_tensor(data_WSI) else data_WSI
+        data_omic  = data_omic.to(args.device, non_blocking=True)
+        y_disc     = y_disc.to(args.device, non_blocking=True)
+        event_time = event_time.to(args.device, non_blocking=True)
+        censor     = censor.to(args.device, non_blocking=True)
 
-        h = model(x_path=data_WSI, x_omic=data_omic, x_mri=data_MRI)
+        with torch.cuda.amp.autocast(enabled=use_amp):
+            h = model(x_path=data_WSI, x_omic=data_omic, x_mri=data_MRI)
+        
+        # Cast everything the loss touches to float32
+        if isinstance(loss_fn, NLLSurvLoss):  # survival
+            loss = loss_fn(
+                h=h.float(),
+                y=y_disc.float(),
+                t=event_time.float(),
+                c=censor.float()
+            )
+        else:  # classification
+            loss = loss_fn(h.float(), y_disc.long())  # logits to float32, targets long
 
-        if isinstance(loss_fn, NLLSurvLoss):
-            loss = loss_fn(h=h, y=y_disc, t=event_time, c=censor)
-        else:
-            loss = loss_fn(h, y_disc.long())
+        # h = model(x_path=data_WSI, x_omic=data_omic, x_mri=data_MRI)
 
-        loss_value = float(loss.detach())
+        # if isinstance(loss_fn, NLLSurvLoss):
+        #     loss = loss_fn(h=h, y=y_disc, t=event_time, c=censor)
+        # else:
+        #     loss = loss_fn(h, y_disc.long())
+
+        loss_value = float(loss.detach().cpu())
         loss_main_sum += loss_value
         loss_total_sum += loss_value
         n_batches += 1
@@ -226,9 +251,18 @@ def train_loop(epoch, model, loader, optimizer, loss_fn, args, gc=16):
                 cls_correct += (preds == y_disc).sum().item()
                 cls_total   += y_disc.numel()
 
-        (loss / gc).backward()
+        accum_loss = loss / gc
+        if use_amp:
+            scaler.scale(accum_loss).backward()
+        else:
+            accum_loss.backward()
+
         if (batch_idx + 1) % gc == 0:
-            optimizer.step()
+            if use_amp:
+                scaler.step(optimizer)
+                scaler.update()
+            else:
+                optimizer.step()
             optimizer.zero_grad(set_to_none=True)
 
     if n_batches == 0:
@@ -260,7 +294,7 @@ def train_loop(epoch, model, loader, optimizer, loss_fn, args, gc=16):
 # VALIDATE 
 # --------------------
 @torch.no_grad()
-def validate(cur, epoch, model, loader, loss_fn, args, gc=16):
+def validate(cur, epoch, model, loader, loss_fn, args, gc=16, use_amp=False):
     model.eval()
     loss_main_sum, loss_total_sum = 0.0, 0.0
     n_batches = 0
@@ -272,13 +306,32 @@ def validate(cur, epoch, model, loader, loss_fn, args, gc=16):
         if batch is None:
             continue
         data_MRI, data_WSI, data_omic, y_disc, event_time, censor, _ = batch
+        data_MRI   = data_MRI.to(args.device, non_blocking=True)
+        data_WSI   = data_WSI.to(args.device, non_blocking=True) if torch.is_tensor(data_WSI) else data_WSI
+        data_omic  = data_omic.to(args.device, non_blocking=True)
+        y_disc     = y_disc.to(args.device, non_blocking=True)
+        event_time = event_time.to(args.device, non_blocking=True)
+        censor     = censor.to(args.device, non_blocking=True)
 
-        h = model(x_path=data_WSI, x_omic=data_omic, x_mri=data_MRI)
+        with torch.cuda.amp.autocast(enabled=use_amp):
+            h = model(x_path=data_WSI, x_omic=data_omic, x_mri=data_MRI)
 
-        if isinstance(loss_fn, NLLSurvLoss):
-            loss = loss_fn(h=h, y=y_disc, t=event_time, c=censor)
-        else:
-            loss = loss_fn(h, y_disc.long())
+        # Cast everything the loss touches to float32
+        if isinstance(loss_fn, NLLSurvLoss):  # survival
+            loss = loss_fn(
+                h=h.float(),
+                y=y_disc.float(),
+                t=event_time.float(),
+                c=censor.float()
+            )
+        else:  # classification
+            loss = loss_fn(h.float(), y_disc.long())  # logits to float32, targets long
+        # h = model(x_path=data_WSI, x_omic=data_omic, x_mri=data_MRI)
+
+        # if isinstance(loss_fn, NLLSurvLoss):
+        #     loss = loss_fn(h=h, y=y_disc, t=event_time, c=censor)
+        # else:
+        #     loss = loss_fn(h, y_disc.long())
 
         loss_value = float(loss)
         loss_main_sum += loss_value
@@ -288,7 +341,7 @@ def validate(cur, epoch, model, loader, loss_fn, args, gc=16):
         if isinstance(loss_fn, NLLSurvLoss):
             hazards  = torch.sigmoid(h)
             survival = torch.cumprod(1 - hazards, dim=1)
-            risk     = -torch.sum(survival, dim=1).cpu().numpy()
+            risk = -torch.sum(torch.cumprod(1 - torch.sigmoid(h), dim=1), dim=1).detach().cpu().numpy()
             surv_scores.append(risk)
             surv_censors.append(censor.cpu().numpy())
             surv_times.append(event_time.cpu().numpy())

@@ -64,6 +64,9 @@ def get_split_loader(split_dataset, training=False, testing=False, weighted=Fals
     """
     collate = collate_MIL
     kwargs = {}
+    pin = torch.cuda.is_available()
+    num_workers = 0  # keep 0 unless you have measured benefit
+    kwargs.update(dict(pin_memory=pin, num_workers=num_workers, persistent_workers=False))
     safe_dataset = _ExceptionSafeDataset(split_dataset)  # <--- wrap here
 
     if not testing:
@@ -81,7 +84,7 @@ def get_split_loader(split_dataset, training=False, testing=False, weighted=Fals
                 loader = DataLoader(
                     safe_dataset,
                     batch_size=batch_size,
-                    sampler=RandomSampler(safe_dataset),
+                    sampler=RandomSampler(split_dataset),
                     collate_fn=collate,
                     **kwargs
                 )
@@ -102,7 +105,6 @@ def get_split_loader(split_dataset, training=False, testing=False, weighted=Fals
             collate_fn=collate,
             **kwargs
         )
-
     return loader
 
 def get_optim(model, args):

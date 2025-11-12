@@ -212,43 +212,32 @@ class GatedAddFusion(nn.Module):
 
 
 class CrossAttentionFusion(nn.Module):
-    """Bidirectional cross-attention between two single-token streams.
-    Produces a fused token via gated sum of the attended tokens.
-    """
+    """Self-attention over a 2-token sequence [mri, omic]."""
     def __init__(self, dim_mri: int, dim_omic: int, d_model: int = 128, nhead: int = 4, dropout: float = 0.1):
         super().__init__()
-        self.pm_q = nn.Linear(dim_mri, d_model)
-        self.pm_kv = nn.Linear(dim_mri, d_model)
-        self.po_q = nn.Linear(dim_omic, d_model)
-        self.po_kv = nn.Linear(dim_omic, d_model)
+        self.pm = nn.Linear(dim_mri, d_model, bias=False)
+        self.po = nn.Linear(dim_omic, d_model, bias=False)
         self.attn = nn.MultiheadAttention(d_model, nhead, dropout=dropout, batch_first=True)
-        self.norm = nn.LayerNorm(d_model)
-        self.gate = nn.Sequential(
-            nn.Linear(d_model * 2, d_model),
-            nn.ReLU(inplace=True),
-            nn.Linear(d_model, d_model),
-            nn.Sigmoid(),
+        self.norm1 = nn.LayerNorm(d_model)
+        self.ff = nn.Sequential(
+            nn.Linear(d_model, 4*d_model), nn.ReLU(inplace=True), nn.Dropout(dropout),
+            nn.Linear(4*d_model, d_model)
         )
+        self.norm2 = nn.LayerNorm(d_model)
         self.out_dim = d_model
 
-    def _attend(self, q, kv):
-        # q, kv: [B, 1, D]
-        out, _ = self.attn(q, kv, kv)
-        return self.norm(out)
-
     def forward(self, z_mri, z_omic):
-        # make single-token sequences
-        qm = self.pm_q(z_mri).unsqueeze(1)    # [B,1,D]
-        km = self.pm_kv(z_mri).unsqueeze(1)
-        qo = self.po_q(z_omic).unsqueeze(1)
-        ko = self.po_kv(z_omic).unsqueeze(1)
+        # tokens: [B, 2, D]
+        tokens = torch.stack([self.pm(z_mri), self.po(z_omic)], dim=1)
+        h, _ = self.attn(tokens, tokens, tokens)     # self-attn over {MRI, OMIC}
+        h = self.norm1(tokens + h)                   # residual
+        h2 = self.ff(h)
+        h = self.norm2(h + h2)                       # residual
 
-        m_att = self._attend(qm, ko).squeeze(1)  # MRI attending to OMIC
-        o_att = self._attend(qo, km).squeeze(1)  # OMIC attending to MRI
-
-        g = self.gate(torch.cat([m_att, o_att], dim=1))
-        z = g * m_att + (1 - g) * o_att
+        # Pool 2 tokens to 1 fused token (mean or learnable pool)
+        z = h.mean(dim=1)                            # [B, D]
         return z
+
 
 
 # -----------------------------
@@ -372,16 +361,16 @@ class FusionFactory:
             fusion=fusion,
             fuse_point_mri=fuse_point_mri,
             fuse_k_omic=fuse_k_omic,
-            layer_num=getattr(args, 'layer_num', 32),
-            p_slice_drop=getattr(args, 'p_slice_drop', 0.15),
-            sd_prob=getattr(args, 'sd_prob', 0.1),
-            attn_dropout=getattr(args, 'attn_dropout', 0.1),
-            p_spatial_drop=getattr(args, 'p_spatial_drop', 0.05),
-            norm=getattr(args, 'norm', 'gn'),
-            dim_fuse=getattr(args, 'dim_fuse', 256),
-            d_model=getattr(args, 'd_model', 256),
-            nhead=getattr(args, 'nhead', 4),
-            head_hidden=getattr(args, 'head_hidden', 256),
-            head_dropout=getattr(args, 'head_dropout', 0.3),
+            layer_num=args.layer_num,
+            p_slice_drop=args.p_slice_drop,
+            sd_prob=args.sd_prob,
+            attn_dropout=args.attn_dropout,
+            p_spatial_drop=args.p_spatial_drop,
+            norm=args.norm,
+            dim_fuse=args.dim_fuse,
+            d_model=args.d_model,
+            nhead=args.nhead,
+            head_hidden=args.head_hidden,
+            head_dropout=args.head_dropout,
         )
         return model
