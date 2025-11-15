@@ -1,9 +1,8 @@
-<< Mashrafi & Ahmed: No need to do that preprocessed scripts are already there>>
+
 1. Download Raw Clinical Data
    LGG data: https://www.cbioportal.org/study?id=lgg_tcga_pan_can_atlas_2018
    GBM data:
    
-<< Mashrafi & Ahmed: No need to do that preprocessed scripts are already there>>
 2. Run Script to Preprocess Genomics & Clinical Data
    python preproces.py \
   --gbm_dir "C:\Users\Amr\Downloads\gbm_tcga_pan_can_atlas_2018\gbm_tcga_pan_can_atlas_2018" \
