@@ -10,6 +10,10 @@ from torch.utils.data import Dataset
 from sklearn.model_selection import train_test_split
 from utils.utils import *
 
+# # Make sure we can query a sample’s label by index
+# def _getlabel(idx, slide_data):
+#     return int(slide_data['label'].iloc[idx])
+
 def _get_case_id_series(df: pd.DataFrame) -> pd.Series:
     """Return a string Series of case_ids regardless of whether they live in a column or the index."""
     if 'case_id' in df.columns:
@@ -539,10 +543,11 @@ class Generic_Split(Generic_MIL_Dataset):
             idxs = np.where(labels_np == c)[0]
             self.slide_cls_ids[c] = idxs.tolist()
 
-        # Make sure we can query a sample’s label by index
-        def _getlabel(idx):
-            return int(self.slide_data['label'].iloc[idx])
-        self.getlabel = _getlabel  # bind as method
+        
+        # self.getlabel = _getlabel  # bind as method
+    
+    def getlabel(self, idx):
+        return int(self.slide_data['label'].iloc[idx])
 
     def get_scaler(self):
         scaler_omic = StandardScaler().fit(self.genomic_features.values)

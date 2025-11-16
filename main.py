@@ -133,6 +133,37 @@ def _restrict_to_mri_2p5d_intersection(ds: Generic_MIL_Dataset, mri_dir: str) ->
     print(f"[INFO] Cohort matched to 2.5D MRI: rows {before} → {after} | unique patients = {n_pat}", flush=True)
 
 
+def save_best_model(best_ckpt_path, best_fold, metrics, val_loaders, val_splits, 
+                   train_loaders, train_splits, args):
+    """Save the best model and associated data"""
+    
+    if best_ckpt_path is not None:
+        dst = os.path.join(args.results_dir, f'best_model_{args.mode}.pt')
+        if dst != best_ckpt_path:
+            import shutil
+            shutil.copyfile(best_ckpt_path, dst)
+    
+    
+    # Save loaders and splits
+    save_pickle(val_loaders[best_fold], 
+               os.path.join(args.results_dir, f"val_loader_{args.mode}.pkl"))
+    save_pickle(val_splits[best_fold],
+               os.path.join(args.results_dir, f"val_split_{args.mode}.pkl"))
+    save_pickle(train_loaders[best_fold],
+               os.path.join(args.results_dir, f"train_loader_{args.mode}.pkl"))
+    save_pickle(train_splits[best_fold],
+               os.path.join(args.results_dir, f"train_split_{args.mode}.pkl"))
+    save_pickle(args,
+               os.path.join(args.results_dir, f"args_{args.mode}.pkl"))
+    
+    print(f"\nBest model from fold {best_fold} saved.")
+
+
+def save_pickle(obj, filepath):
+    """Helper to save pickle files"""
+    with open(filepath, 'wb') as f:
+        pickle.dump(obj, f)
+
 def main(args):
     os.makedirs(args.results_dir, exist_ok=True)
 
@@ -140,6 +171,10 @@ def main(args):
     best_fold = -1
     best_ckpt_path = None
     per_fold_metrics = []
+    val_loaders = []
+    val_splits = []
+    train_loaders = []
+    train_splits = []
     
     # check if cuda is being used
     print("Using device:", device)
@@ -174,8 +209,14 @@ def main(args):
             best_fold = i
             best_ckpt_path = fold_ckpt
 
+        val_loaders.append(val_loader)
+        val_splits.append(val_dataset)
+        train_loaders.append(train_loader)
+        train_splits.append(train_dataset)
+
         # ---- FREE MEMORY: drop big references & collect ----
-        del model, train_loader, val_loader, train_dataset, val_dataset
+        # del model, train_loader, val_loader, train_dataset, val_dataset
+        del model
         gc.collect()
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
@@ -189,11 +230,13 @@ def main(args):
             f.write(f'{i},{m},{p}\n')
 
     # Copy best checkpoint to canonical name
-    if best_ckpt_path is not None:
-        dst = os.path.join(args.results_dir, f'best_model_{args.mode}.pt')
-        if dst != best_ckpt_path:
-            import shutil
-            shutil.copyfile(best_ckpt_path, dst)
+    # if best_ckpt_path is not None:
+    #     dst = os.path.join(args.results_dir, f'best_model_{args.mode}.pt')
+    #     if dst != best_ckpt_path:
+    #         import shutil
+    #         shutil.copyfile(best_ckpt_path, dst)
+    save_best_model(best_ckpt_path, best_fold, per_fold_metrics, val_loaders, val_splits,
+                   train_loaders, train_splits, args)
 
     # Print average metric
     if per_fold_metrics:

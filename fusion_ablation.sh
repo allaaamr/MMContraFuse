@@ -98,7 +98,7 @@ echo "==> Results -> ${OUT_DIR}"
 ${PY} "${MAIN}" \
   --mode "${FUSION_MODE}" \
   --task "${TASK}" \
-  ${CREATE_SPLIT} \
+  --split_dir data/splits \
   --seed ${SEED} \
   --results_dir "${OUT_DIR}" \
   \
