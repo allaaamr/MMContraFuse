@@ -355,6 +355,23 @@ parser.add_argument('--amp', action='store_true', default=True,
 parser.add_argument('--cpu_only', action='store_true', default=False,
                     help='Force CPU even if CUDA is available (debug).')
 
+# Debiasing (GRL) flags
+parser.add_argument('--debias', action='store_true', default=False,
+    help='Enable GRL-based age debiasing on the fused representation (validation bias tracking is always on if age available).')
+parser.add_argument('--adv_lambda_start', type=float, default=0.0, help='Initial λ_adv for GRL.')
+parser.add_argument('--adv_lambda_end', type=float, default=1.0, help='Final λ_adv for GRL.')
+parser.add_argument('--adv_warmup', type=int, default=3, help='Warmup epochs for λ_adv ramp.')
+parser.add_argument('--editor_hidden', type=int, default=None, help='Hidden size for residual editor (default=2*D).')
+parser.add_argument('--editor_resid_scale', type=float, default=0.1, help='Residual scale for editor output.')
+parser.add_argument('--adv_hidden', type=int, default=None, help='Hidden size for age adversary (default=2*D).')
+parser.add_argument('--prox_lambda', type=float, default=1e-3, help='Weight for ||z\'-z||^2.')
+parser.add_argument('--cons_lambda', type=float, default=1e-2, help='Weight for KL(C(z)||C(z\')).')
+
+parser.add_argument('--frozen_ckpt', type=str, default=None,
+    help='Path to a trained checkpoint to load and freeze (base model).')
+parser.add_argument('--freeze_base', action='store_true', default=True,
+    help='If True, freeze the loaded base model; only train debias editor/adversary.')
+
 args = parser.parse_args()
 
 

@@ -145,17 +145,46 @@ def collate_MIL(batch):
     # Drop items that failed to load
     batch = [b for b in batch if b is not None]
     if len(batch) == 0:
-        # Signal to the training loop to skip this batch
         return None
 
-    mri = torch.cat([item[0] for item in batch], dim=0).type(torch.FloatTensor)
-    img = torch.cat([item[1] for item in batch], dim=0)
-    omic = torch.cat([item[2] for item in batch], dim=0).type(torch.FloatTensor)
-    label = torch.LongTensor([int(item[3].item()) for item in batch])
-    event_time = torch.FloatTensor([item[4] for item in batch])
-    c = torch.FloatTensor([item[5] for item in batch])
+    def _as_float_tensor_list(xs):
+        out = []
+        for x in xs:
+            if torch.is_tensor(x):
+                # flatten scalars like shape [1] -> scalar
+                out.append(x.view(-1)[0].float())
+            else:
+                out.append(torch.tensor(float(x), dtype=torch.float32))
+        return torch.stack(out, dim=0)
+
+    def _as_long_tensor_list(xs):
+        out = []
+        for x in xs:
+            if torch.is_tensor(x):
+                out.append(x.view(-1)[0].long())
+            else:
+                out.append(torch.tensor(int(x), dtype=torch.long))
+        return torch.stack(out, dim=0)
+
+    # Core tensors
+    mri   = torch.cat([item[0] for item in batch], dim=0).type(torch.FloatTensor)
+    img   = torch.cat([item[1] for item in batch], dim=0)
+    omic  = torch.cat([item[2] for item in batch], dim=0).type(torch.FloatTensor)
+
+    # Labels / times / censor
+    # item[3] might be a scalar tensor (risk) OR an int (subtype); make it a LongTensor vector
+    label      = _as_long_tensor_list([item[3] for item in batch])
+    event_time = _as_float_tensor_list([item[4] for item in batch])
+    c          = _as_float_tensor_list([item[5] for item in batch])
+
     slide_ids = [item[6] for item in batch]
-    return [mri, img, omic, label, event_time, c, slide_ids]
+
+    # ---- Optional age_group (8th tuple element) ----
+    if len(batch[0]) >= 8:
+        age_group = _as_long_tensor_list([item[7] for item in batch])
+        return [mri, img, omic, label, event_time, c, slide_ids, age_group]
+    else:
+        return [mri, img, omic, label, event_time, c, slide_ids]
 
 
 

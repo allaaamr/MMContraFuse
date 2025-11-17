@@ -327,6 +327,22 @@ class GenoMRI_Fusion(nn.Module):
         z = self.fuse(z_mri, z_omic)
         logits = self.head(z)
         return logits
+    def repr(self, x_mri=None, x_path=None, x_omic=None):
+        """Return fused representation before final head."""
+        if x_mri is None or x_omic is None:
+            raise ValueError("repr() expects both x_mri and x_omic")
+        z_mri = self.mri(x_mri)
+        z_omic = self.snn(x_omic)
+        return self.fuse(z_mri, z_omic)   # [B, D_fused]
+
+    def classify_from_repr(self, z):
+        """Apply the frozen/final classification head to a representation."""
+        return self.head(z)
+
+    def forward(self, x_mri=None, x_path=None, x_omic=None):
+        z = self.repr(x_mri=x_mri, x_omic=x_omic)
+        logits = self.classify_from_repr(z)
+        return logits
 
 
 # -----------------------------

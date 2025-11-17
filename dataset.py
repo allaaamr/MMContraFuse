@@ -468,7 +468,15 @@ class Generic_MIL_Dataset(Generic_Dataset):
     def __getitem__(self, idx):
         case_id = str(self.slide_data['case_id'][idx])
         nid = _norm_id(case_id)
-
+        # ---- age group (0 young, 1 old) ----
+        raw_age = self.slide_data.loc[idx, 'age']
+        try:
+            ag = int(raw_age)
+            if ag not in (0, 1):  # safety: if someone stored 30/70 etc.
+                ag = 0 if float(raw_age) < 60 else 1
+        except Exception:
+            ag = 0  # default young if missing/NaN; adjust if you prefer
+        age_group = torch.tensor(int(ag), dtype=torch.long)
         # handle label/censoring as you already do...
         event_time = torch.Tensor([self.slide_data[self.label_col][idx]])
         if self.label_col == "survival":
@@ -490,18 +498,22 @@ class Generic_MIL_Dataset(Generic_Dataset):
         if self.mode == 'radio_2.5D':
             mri_tensors = self.load_mri_2_5D(case_id)  # loader resolves via nid internally
             mri_tensors = mri_tensors.unsqueeze(0)     # [1,S,H,W]
-            return (mri_tensors, torch.zeros((1, 1)), torch.zeros((1, 1)), label, event_time,  c, slide_ids)
+            return (mri_tensors, torch.zeros((1, 1)), torch.zeros((1, 1)),
+                label, event_time, c, slide_ids, age_group)
 
         # --- OMIC or fusion branches ---
         elif self.mode == 'genomic':
             xomic = torch.tensor(self.genomic_features.loc[nid].to_numpy(dtype=np.float32))
-            return (torch.zeros((1,1)), torch.zeros((1,1)), xomic.unsqueeze(0), label, event_time, c, slide_ids)
+            return (torch.zeros((1,1)), torch.zeros((1,1)), xomic.unsqueeze(0),
+                label, event_time, c, slide_ids, age_group)
+
 
         elif self.mode in ('radiomic', 'radiopathomics', 'radiomic2.5D', 'genomic_radio_2.5D'):
             # example for fusion: MRI + OMIC
             mri_tensors = self.load_mri_2_5D(case_id).unsqueeze(0)
             xomic = torch.tensor(self.genomic_features.loc[nid].to_numpy(dtype=np.float32))
-            return (mri_tensors, torch.zeros((1,1)), xomic.unsqueeze(0), label, event_time, c, slide_ids)
+            return (mri_tensors, torch.zeros((1,1)), xomic.unsqueeze(0),
+                    label, event_time, c, slide_ids, age_group)
 
                 
 class Generic_Split(Generic_MIL_Dataset):
