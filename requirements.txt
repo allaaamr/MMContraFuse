@@ -1,0 +1,12 @@
+numpy>=1.24
+pandas>=1.5
+torch>=2.0
+torchaudio>=2.0
+torchvision>=0.15
+matplotlib>=3.7
+tqdm>=4.66
+scikit-learn>=1.2
+scikit-survival>=0.21
+lifelines>=0.27
+SimpleITK>=2.2
+nibabel>=5.1
