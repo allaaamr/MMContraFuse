@@ -115,10 +115,9 @@ class GenoMRIExplainer:
         Returns:
             Batch data for the patient or None if not found
         """
-        for batch in loader:
+        for i, batch in enumerate(loader):
             # Assuming batch structure: [x_mri, x_path, x_omic, label, months, censored, slide_ids]
             slide_id = batch[6] if len(batch) > 6 else batch[-1]
-            print(slide_id[0][0])
             if slide_id[0][0] == case_id:
                 # Return single patient data
                 return batch

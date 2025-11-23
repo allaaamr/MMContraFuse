@@ -25,6 +25,7 @@ from pathlib import Path
 import numpy as np
 import nibabel as nib
 from scipy.ndimage import label
+import pandas as pd
 
 # ------------------------------------------------------------
 #                 Helper Functions
@@ -119,6 +120,22 @@ def _choose_axial_indices(mask_comp: np.ndarray, n_slices=8) -> list[int]:
         rounded = [min(zmax, i) for i in rounded]
     return rounded[:n_slices]
 
+def _get_image_ids(images_folder: str) -> list:
+    """
+    Return a list of patient IDs (file stems) for all .npy files
+    in the given folder (non-recursive).
+    
+    Example:
+        data/
+          ├── PatientID_0001.npy
+          ├── PatientID_0002.npy
+        → ["PatientID_0001", "PatientID_0002"]
+    """
+    ids = []
+    for fname in os.listdir(images_folder):
+        if fname.endswith(".npy"):
+            ids.append(os.path.splitext(fname)[0])
+    return ids
 # ------------------------------------------------------------
 #                 Main Patient Processing
 # ------------------------------------------------------------
@@ -131,6 +148,7 @@ def process_patient(patient_dir: Path, dst_root: Path, n_slices=8) -> None:
     3. Load and normalize scans.
     4. Extract 8 tumor slices (axial view).
     5. Stack modalities into (8, H, W, 4).
+    6. Transform into (32, H, W).
     6. Save as .npy file in a destination subfolder.
     """
     tp_dir = _find_timepoint_dir(patient_dir)
@@ -182,21 +200,102 @@ def process_patient(patient_dir: Path, dst_root: Path, n_slices=8) -> None:
     # Combine 8 slices into a single 4-channel array
     # Shape: (8, H, W, 4)
     H, W, _ = t1_n.shape
-    out = np.zeros((len(z_idx), H, W, 4), dtype=np.float32)
+    out4d = np.zeros((len(z_idx), H, W, 4), dtype=np.float32)
     for i, z in enumerate(z_idx):
-        out[i, :, :, 0] = t1_n[:, :, z]
-        out[i, :, :, 1] = t1c_n[:, :, z]
-        out[i, :, :, 2] = t2_n[:, :, z]
-        out[i, :, :, 3] = flair_n[:, :, z]
+        out4d[i, :, :, 0] = t1_n[:, :, z]
+        out4d[i, :, :, 1] = t2_n[:, :, z]
+        out4d[i, :, :, 2] = flair_n[:, :, z]
+        out4d[i, :, :, 3] = t1c_n[:, :, z]
+
+    # ----------- save as (32, H, W) -----------
+    # (8, H, W, 4) -> (8, 4, H, W) -> (32, H, W)
+    out = np.transpose(out4d, (0, 3, 1, 2)).reshape(-1, H, W)
+    assert out.shape[0] == len(z_idx) * 4, f"Unexpected depth: {out.shape}"
+
 
     # Save result in destination folder under patient ID
-    dst_dir = dst_root / patient_dir.name
-    dst_dir.mkdir(parents=True, exist_ok=True)
-    np.save(dst_dir / f"{patient_dir.name}_tp1_slices.npy", out)
-    print(f"[ok] {patient_dir.name}: saved {out.shape} -> {dst_dir}")
+    dst_root.mkdir(parents=True, exist_ok=True)
+    np.save(dst_root / f"{patient_dir.name}.npy", out)
+    print(f"[ok] {patient_dir.name}: saved {out.shape} -> {dst_root}")
 
 # ------------------------------------------------------------
-#                 Command Line Interface
+#                 Clinical Data Processing
+# ------------------------------------------------------------
+def process_clinical(raw_csv: str, img_path: Path)->None:
+    df = pd.read_excel(raw_csv)
+    df['slide_id'] = df['case_id']
+
+    #Filter to keep GBM Cases
+    df['type'] = np.where(df["Primary Diagnosis"] == "GBM", 1, 0)
+
+    #Rename Columns
+    df['age'] = df['Age at diagnosis']
+    df["gender"] = np.where(df["Sex at Birth"] == "Male", 0, 1)
+    df['censorship'] = np.where(df["Overall Survival (Death)"] == 1, 0, 1)
+    df['race'] = df['Race']
+
+    #Create survival column in months  (days --> months)
+    df['survival']= df['Number of days from Diagnosis to death (Days)'] / 30.417
+    df['PatientID'] = df['case_id']
+    # print(df.columns)
+    # Impute censored patients' survival column with last follow up
+    follow_up_cols = [
+    "Number of Days from Diagnosis to Starting Additional Therapy ",
+    "Number of Days from Diagnosis to Complete Additional Therapy ",
+    "Number of Cycles of Additional Therapy",
+    "Number of Days from Diagnosis to Complete Immunotherapy ",
+    "Number of Days from Diagnosis to Start Other Additional Therapy ",
+    "Number of Days from Diagnosis to Complete Other Additional Therapy ",
+    "Number of Days from Diagnosis to 1st MRI (Timepoint_1) ",
+    "Number of Days from Diagnosis to 2nd MRI (Timepoint_2) ",
+    "Number of Days from Diagnosis to 3rd MRI (Timepoint_3) ",
+    "Number of Days from Diagnosis to 4th MRI (Timepoint_4) ",
+    "Number of Days from Diagnosis to 5th MRI (Timepoint_5) ",
+    "Number of Days from Diagnosis to 6th MRI (Timepoint_6) ",
+    ]
+
+
+    # Count missing survival before
+    before_missing = df["survival"].isna().sum()
+    print(f"Missing survival before imputation: {before_missing}")
+
+    df[follow_up_cols] = df[follow_up_cols].apply(pd.to_numeric, errors="coerce")
+
+    # 5) Row-wise maximum across those columns
+    row_max = df[follow_up_cols].max(axis=1, skipna=True)
+
+    # 6) Impute survival where it's NaN using the row-wise max
+    mask = df["survival"].isna()
+    df.loc[mask, "survival"] = row_max[mask]
+
+    # Count missing survival after
+    after_missing = df["survival"].isna().sum()
+    print(f"Missing survival after imputation: {after_missing}")
+
+    # If any are still NaN, report how many remain
+    if after_missing > 0:
+        df = df.dropna(subset=["survival"])
+        print(f"Remaining patients still NaN after imputation: {after_missing}")
+
+    genomic_columns = ["IDH1 mutation",	"IDH2 mutation","1p/19q", "ATRX mutation", "MGMT methylation", "BRAF V600E mutation", "TERT promoter mutation", "Chromosome 7 gain and Chromosome 10 loss",	"H3-3A mutation", "EGFR amplification",	"PTEN mutation","CDKN2A/B deletion","TP53 alteration"]
+
+    columns_to_keep = ['case_id', "slide_id", "type", "age", "gender", "censorship", "race", "survival", "PatientID"] + genomic_columns
+
+    #drop any columns except these 
+    df = df.loc[:, df.columns.intersection(columns_to_keep)]
+    print(df.shape)
+
+    # Filter patients with no MRI Images T1 
+    patients_with_mri = _get_image_ids(img_path)
+    print(f"{len(patients_with_mri)} Patients with T1 Images")
+
+    df = df[df['case_id'].isin(patients_with_mri)]
+    print(df.shape)
+    df.to_csv("data/MIUGlioma/MIU-Glioma.csv")
+    print(df.head())
+
+# ------------------------------------------------------------
+#                 Main
 # ------------------------------------------------------------
 
 def main():
@@ -204,18 +303,30 @@ def main():
     Parse command-line arguments and process all patients under the source root.
     """
     ap = argparse.ArgumentParser(description="Extract tumor-centered slices and save stacked .npy per patient.")
-    ap.add_argument("src_root", type=Path, help="Path to dataset root (contains patient ID folders).")
-    ap.add_argument("dst_root", type=Path, help="Path to destination root where .npy files will be saved.")
+    ap.add_argument("--src_root", type=Path, help="Path to dataset root (contains patient ID folders).", default="data/MIUGlioma/MU-Glioma-Raw")
+    ap.add_argument("--dst_root", type=Path, help="Path to destination root where .npy files will be saved.", default="data/MIUGlioma/2.5D_MRIs")
+    ap.add_argument("--raw_csv", type=str, help="Path to raw csv file", default="data/MIUGlioma/MU-Glioma-Raw/MU-Glioma-ClinicalData-2025.xlsx")
     ap.add_argument("--slices", type=int, default=8, help="Number of axial slices to extract (default=8).")
+    ap.add_argument("--mri", type=bool, default=False, help="Whether to process raw mri scans")
+    ap.add_argument("--clinical", type=bool, default=False, help="Whether to process raw clinical data")
+
     args = ap.parse_args()
 
-    patients = [p for p in sorted(args.src_root.iterdir()) if p.is_dir()]
-    if not patients:
-        print("No patient folders found.")
-        return
+    if args.mri:
+        patients = [p for p in sorted(args.src_root.iterdir()) if p.is_dir()]
+        if not patients:
+            print("No patient folders found.")
+            return
 
-    for p in patients:
-        process_patient(p, args.dst_root, n_slices=args.slices)
+        for p in patients:
+            process_patient(p, args.dst_root, n_slices=args.slices)
+    else:
+        print("Skipping RAW MRI Processing. To process it add arguement --mri")
+    
+    if args.clinical:
+        process_clinical(args.raw_csv, args.dst_root)
+    else:
+        print("Skipping RAW Clinical Processing. To process it add arguement --clinical")
 
 if __name__ == "__main__":
     main()

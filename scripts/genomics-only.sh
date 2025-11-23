@@ -5,18 +5,19 @@
 #SBATCH --mem=124G
 #SBATCH -t 24:00:00
 
-# python main-genomics.py \
+#MIU Dataset
+# python main.py \
 #   --mode genomic \
-#   --csv data/processed_tabular_data/mut_cna_177_patients.csv \
-#   --mri_dir data/2.5D_MRIs \
-#   --split_dir data/splits \
+#   --csv data/MIUGlioma/MIU-Glioma.csv \
+#   --mri_dir data/MIUGlioma/2.5D_MRIs \
+#   --split_dir data/MIUGlioma/splits \
 #   --results_dir results/genomics_matched_to_2p5d \
-#   --match_mri2p5d_cohort
 
-python main-genomics.py \
-    --mode radio_2.5D \
-    --csv data/processed_tabular_data/mut_cna_177_patients.csv \
-    --mri_dir data/2.5D_MRIs \
-    --split_dir data/splits \
-    --results_dir results/mri2p5d_matched_to_genomics \
-    --match_genomics_cohort
+#TCGA Dataset
+python main.py \
+  --mode genomic \
+    --csv data/TCGA/processed_tabular_data/mut_cna_177_patients.csv \
+    --task risk \
+    --mri_dir data/TCGA/2.5D_MRIs \
+    --split_dir data/TCGA/splits \
+    --results_dir results/radiogenomic_M1_TCGA

@@ -116,20 +116,46 @@ def get_optim(model, args):
         raise NotImplementedError
     return optimizer
 
-def make_weights_for_balanced_classes_split(dataset):
-    """
-    The variable weight_per_class is a list that stores the weight for each class.
-      The idea is to give more weight to underrepresented classes (classes with fewer samples) 
-      and less weight to overrepresented classes (classes with more samples).'
-    """
-    N = float(len(dataset))                                           
-    weight_per_class = [N/len(dataset.slide_cls_ids[c]) for c in range(len(dataset.slide_cls_ids))]                                                                                                     
-    weight = [0] * int(N)                                           
-    for idx in range(len(dataset)):   
-        y = dataset.getlabel(idx)                        
-        weight[idx] = weight_per_class[y]                                  
+# def make_weights_for_balanced_classes_split(dataset):
+#     """
+#     The variable weight_per_class is a list that stores the weight for each class.
+#       The idea is to give more weight to underrepresented classes (classes with fewer samples) 
+#       and less weight to overrepresented classes (classes with more samples).'
+#     """
+#     N = float(len(dataset))  
+#     for c in range(len(dataset.slide_cls_ids)):
+#         print(f"Class {c}: {len(dataset.slide_cls_ids[c])} samples")                                             
+#     weight_per_class = [N/len(dataset.slide_cls_ids[c]) for c in range(len(dataset.slide_cls_ids))]                                                                                      
+#     weight = [0] * int(N)                                           
+#     for idx in range(len(dataset)):   
+#         y = dataset.getlabel(idx)                        
+#         weight[idx] = weight_per_class[y]                                  
 
-    return torch.DoubleTensor(weight)
+#     return torch.DoubleTensor(weight)
+
+def make_weights_for_balanced_classes_split(dataset):
+    # dataset.slide_cls_ids is a list: one list of indices per class
+    class_counts = [len(ids) for ids in dataset.slide_cls_ids]
+    N = float(sum(class_counts))
+
+    # Debug print
+    print("Class counts:", class_counts)
+    empties = [i for i, c in enumerate(class_counts) if c == 0]
+    if empties:
+        print(f"[WARN] Empty classes in this split: {empties}. "
+              f"They will get weight 0 (not sampled).")
+
+    # Inverse-frequency weights; 0 for empty classes (no samples to assign anyway)
+    weight_per_class = [(N / cnt) if cnt > 0 else 0.0 for cnt in class_counts]
+
+    # Build per-sample weights
+    weights = np.zeros(len(dataset), dtype=np.float32)
+    for c, ids in enumerate(dataset.slide_cls_ids):
+        if not ids:    # empty class
+            continue
+        weights[ids] = weight_per_class[c]
+
+    return torch.as_tensor(weights, dtype=torch.double)
 
 def initialize_weights(module):
     for m in module.modules():
