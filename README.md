@@ -59,6 +59,7 @@ MMCONTRAFUSE/
 # Clone main repository
 git clone https://github.com/allaaamr/MMContraFuse.git
 cd MMContraFuse
+git checkout -m adv
 
 
 ```
