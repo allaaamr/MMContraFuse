@@ -35,7 +35,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--csv", required=True, help="Clinical/genomic CSV to evaluate.")
     p.add_argument("--ckpt", required=True, help="Path to the trained .pt checkpoint.")
     p.add_argument("--mode", default="radio_2.5D",
-                   choices=["radio_2.5D", "genomic", "genomic_radio_2.5D"],
+                   choices=["radio_2.5D", "radiomic", "genomic", "genomic_radio_2.5D"],
                    help="Model branch to instantiate.")
     p.add_argument("--task", choices=["risk", "subtype"], default="risk")
     p.add_argument("--n-classes", type=int, default=4, help="Number of discrete survival bins / classes.")
@@ -66,8 +66,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--norm", choices=["gn", "in"], default="gn")
 
     # Fusion hyper-parameters
-    p.add_argument("--fusion", choices=['concat', 'bi_attn', 'tri_attn', 'bi_contrast', 'tri_contrast'],
-                   default='concat')
+    p.add_argument("--fusion", choices=['concat', 'bi_attn', 'tri_attn', 'bi_contrast', 'tri_contrast', 'bilinear'],
+                   default='bilinear')
     p.add_argument("--drop-out", action="store_true", default=True)
     p.add_argument("--dim-fuse", type=int, default=256)
     p.add_argument("--d-model", type=int, default=256)
@@ -76,11 +76,24 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--head-dropout-fusion", type=float, default=0.3)
     p.add_argument("--fuse-point-mri", choices=["stem", "block1", "gap"], default="gap")
     p.add_argument("--fuse-k-omic", type=int, default=None)
+    p.add_argument("--scale-dim1", type=int, default=8,
+                   help="Scale dim for MRI branch inside RadiomicMMF.")
+    p.add_argument("--scale-dim2", type=int, default=8,
+                   help="Scale dim for omics branch inside RadiomicMMF.")
+    p.add_argument("--gate-path", type=int, choices=[0, 1], default=0,
+                   help="Enable gating on MRI branch (RadiomicMMF).")
+    p.add_argument("--gate-omic", type=int, choices=[0, 1], default=0,
+                   help="Enable gating on omics branch (RadiomicMMF).")
+    p.add_argument("--skip-fusion", action="store_true", default=False,
+                   help="Enable skip concatenation for RadiomicMMF.")
+    p.add_argument("--model-size-omic", choices=["small", "big"], default="small")
 
     return p
 
 
 def build_model(args, omic_dim: int) -> torch.nn.Module:
+    from models.Fusion.GatedTensorFusion import RadiomicMMF
+
     if args.mode == "radio_2.5D":
         model = Res34_2p5D_Regularized(
             layer_num=args.layer_num,
@@ -92,6 +105,19 @@ def build_model(args, omic_dim: int) -> torch.nn.Module:
             head_hidden=args.head_hidden,
             head_dropout=args.head_dropout,
             norm=args.norm
+        )
+    elif args.mode == "radiomic":
+        model = RadiomicMMF(
+            omic_input_dim=omic_dim,
+            n_classes=args.n_classes,
+            fusion=args.fusion,
+            scale_dim1=args.scale_dim1,
+            scale_dim2=args.scale_dim2,
+            gate_path=bool(args.gate_path),
+            gate_omic=bool(args.gate_omic),
+            skip=args.skip_fusion,
+            model_size_omic=args.model_size_omic,
+            layer_num=args.layer_num
         )
     elif args.mode == "genomic":
         model = SNN(
@@ -166,7 +192,7 @@ def restrict_to_mri_intersection(dataset: Generic_MIL_Dataset, mri_dir: str) -> 
 
 
 def restrict_dataset(dataset: Generic_MIL_Dataset, args) -> None:
-    if args.mode == "radio_2.5D" and args.match_genomics_cohort:
+    if args.mode in ("radio_2.5D", "radiomic") and args.match_genomics_cohort:
         restrict_to_genomics_intersection(dataset)
     elif args.mode == "genomic" and args.match_mri2p5d_cohort:
         restrict_to_mri_intersection(dataset, args.mri_dir)
@@ -316,8 +342,10 @@ def main(argv: List[str] | None = None) -> int:
     slide_to_case = subset_split.slide_data.set_index("slide_id")["case_id"].to_dict()
     case_ids = [slide_to_case.get(sid, sid) for sid in outputs["slide_ids"]]
 
-    event_indicator = (1.0 - outputs["censors"]).astype(bool)
+    events = 1.0 - outputs["censors"]
+    event_indicator = events.astype(bool)
     c_index = concordance_index_censored(event_indicator, outputs["times"], outputs["scores"], tied_tol=1e-8)[0]
+    brier_score = float(np.mean((outputs["scores"] - events) ** 2))
 
     metrics = {
         "csv": os.path.abspath(args.csv),
@@ -328,6 +356,7 @@ def main(argv: List[str] | None = None) -> int:
         "c_index": float(c_index),
         "risk_mean": float(outputs["scores"].mean()),
         "risk_std": float(outputs["scores"].std()),
+        "brier_score": brier_score,
     }
 
     metrics_path = args.results_dir / f"{tag}_metrics.json"
@@ -349,6 +378,7 @@ def main(argv: List[str] | None = None) -> int:
     print(f"[write] {preds_path}")
 
     calib_df = build_calibration_table(outputs["scores"], outputs["censors"], args.num_calib_bins)
+    calib_df["calibration_gap"] = calib_df["event_rate"] - calib_df["risk_mean"]
     calib_path = args.results_dir / f"{tag}_calibration.csv"
     calib_df.to_csv(calib_path, index=False)
     print(f"[write] {calib_path}")

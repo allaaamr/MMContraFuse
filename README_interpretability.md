@@ -21,6 +21,9 @@ See `requirements.txt` for the Python dependencies needed to run the tooling ins
        data/processed_tabular_data/mut_cna_177_patients.csv \
        --outdir data/demographic_splits
    ```
+   This now also saves `*_age_distribution.png` in the output folder, showing the
+   age histogram for the full cohort with a median line (the same cutoff used for
+   young vs. old splits).
 
 2. **Evaluate each subset** (example for females)  
    ```
@@ -37,9 +40,19 @@ See `requirements.txt` for the Python dependencies needed to run the tooling ins
    ```
    PYTHONPATH=. python scripts/plot_demographic_eval.py
    ```
-   This writes `cindex_bar.png`, `calibration_curves.png`, `risk_histograms.png`, and `risk_group_bars.png` under `results/demographic_eval/`.
+   This now writes c-index and Brier bar charts, calibration curves, per-bin calibration
+   gap grids, fairness gap bars, risk-score histograms, risk-coverage curves, and discrete
+   risk-group bars under `results/demographic_eval/`.
 
-4. **Verify against the original cross-validation splits**  
+4. **Quantify fairness metrics + coverage curves**  
+   ```
+   PYTHONPATH=. python scripts/analyze_demographic_metrics.py \
+       --folder results/demographic_eval/gtf_radiomic
+   ```
+   This emits `demographic_summary.csv`, `fairness_metrics.csv`, and `risk_coverage.csv`
+   inside the folder; rerun `plot_demographic_eval.py` afterward to add the new figures.
+
+5. **Verify against the original cross-validation splits**  
    ```
    PYTHONPATH=. python scripts/eval_splits.py \
        --args-pkl results/radio_2.5D_d3/args_genomic_radio_2.5D_d3.pkl \
