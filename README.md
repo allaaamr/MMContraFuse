@@ -97,3 +97,9 @@ and compile the results with
    python parse_logs.py --logs_dir hyperparam_search/ --out_csv sweep_summary.csv
    python parse_logs.py --logs_dir hyperparam_search_miu/ --out_csv sweep_summary_miu.csv
 ```
+
+## Explainability
+Our explainability code (for SHAP and IG plots) is found under the following folder:
+```bash
+   explainability/
+```
