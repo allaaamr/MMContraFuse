@@ -273,7 +273,7 @@ parser.add_argument('--task', type=str, choices=['subtype', 'risk'], default='ri
 parser.add_argument('--mode', type=str,
                     choices=['genomic', 'path', 'radio_1D', 'radio_2.5D', 'radio_3D',
                              'pathomic', 'radiomic1D', 'radiomic2.5D', 'radiomic3D',
-                             'radiopathomics', 'genomic_radio_2.5D'],
+                             'radiopathomics', 'genomic_radio_2.5D', 'radiomic'],
                     default='genomic', help='Which modalities to use')
 parser.add_argument('--fusion', type=str,
                     choices=['concat', 'bi_attn', 'tri_attn', 'bi_contrast', 'tri_contrast'],
@@ -369,7 +369,7 @@ parser.add_argument('--cons_lambda', type=float, default=1e-2, help='Weight for 
 
 parser.add_argument('--frozen_ckpt', type=str, default=None,
     help='Path to a trained checkpoint to load and freeze (base model).')
-parser.add_argument('--freeze_base', action='store_true', default=True,
+parser.add_argument('--freeze_base', action='store_true', default=False,
     help='If True, freeze the loaded base model; only train debias editor/adversary.')
 
 args = parser.parse_args()

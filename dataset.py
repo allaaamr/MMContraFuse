@@ -472,11 +472,14 @@ class Generic_MIL_Dataset(Generic_Dataset):
         raw_age = self.slide_data.loc[idx, 'age']
         try:
             ag = int(raw_age)
+            median_age = np.median(self.slide_data['age'].dropna().values)
+            print('median age is ', median_age)
             if ag not in (0, 1):  # safety: if someone stored 30/70 etc.
-                ag = 0 if float(raw_age) < 60 else 1
+                ag = 0 if float(raw_age) < median_age else 1
         except Exception:
             ag = 0  # default young if missing/NaN; adjust if you prefer
         age_group = torch.tensor(int(ag), dtype=torch.long)
+        # print('age group ', age_group, flush=True)
         # handle label/censoring as you already do...
         event_time = torch.Tensor([self.slide_data[self.label_col][idx]])
         if self.label_col == "survival":

@@ -4,3 +4,7 @@ data/raw_tabular_data/data_log2_cna.txt
 slurm*
 results/*
 results_grl_frozen/*
+vis_age_dist.py
+scripts/run_adv_train_eval_radiomics.sh
+scripts/run_adv_train_eval.sh
+results*/

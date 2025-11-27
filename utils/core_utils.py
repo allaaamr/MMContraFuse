@@ -11,6 +11,7 @@ from models.Encoder.genomic import SNN
 from models.Encoder.radiomic_2p5 import Radio2p5DNet
 from models.Encoder.deeprisk import Res34_2p5D_Regularized
 from models.Encoder.mri_genomics import FusionFactory
+from models.Fusion.GatedTensorFusion import RadiomicMMF
 from utils.utils import *
 from utils.loss import NLLSurvLoss, CoxPHSurvLoss
 import sys
@@ -18,9 +19,13 @@ import pandas as pd
 import tqdm
 import os
 
-from models.debiasing import ResidualEditor, AgeAdversary, LambdaScheduler, grl
+# from models.debiasing import ResidualEditor, AgeAdversary, LambdaScheduler, grl
+from models.debiasing_bins import ResidualEditor, AgeAdversary, LambdaScheduler, grl
 import torch.nn.functional as F
 
+def _make_bin_onehot(y_bins, n_bins):
+    # y_bins: [B] int (0..n_bins-1)
+    return F.one_hot(y_bins.long(), num_classes=n_bins).float()
 
 def _binwise_scores_surv(logits):
     hazards  = torch.sigmoid(logits)
@@ -90,6 +95,11 @@ def train(datasets: tuple, cur: int, args):
             head_dropout=args.head_dropout,
             norm=args.norm
         )
+    elif args.mode == 'radiomic':
+        model_dict = {'omic_input_dim': args.omic_input_dim, 'fusion': 'bilinear', 'n_classes': args.n_classes, 
+        'gate_path': args.gate_path, 'gate_omic': args.gate_omic, 'scale_dim1': args.scale_dim1, 'scale_dim2': args.scale_dim2, 
+        'skip': args.skip}
+        model = RadiomicMMF(**model_dict)
     elif args.mode == "genomic_radio_2.5D":
         model = FusionFactory.build_from_args(args, args.omic_input_dim)
     else:
@@ -328,14 +338,23 @@ def train_loop(epoch, model, loader, optimizer, loss_fn, args, gc=16, scaler=Non
                     loss_task = loss_fn(logits.float(), y_disc.long())
 
                 # Adversary (conditional on y) via GRL
+                # if age_group is not None:
+                #     y_onehot = F.one_hot(y_disc.long(), num_classes=args.n_classes).float()
+                #     lam = lam_sched.at(epoch) if lam_sched is not None else 1.0
+                #     # logits_a = adv(grl(z_prime, lam), y_onehot)
+                #     cond = make_combined_onehot(y_disc, censor, n_disc=args.n_classes, n_cens=2)
+                #     logits_a = adv(grl(z_prime, lam), cond)
+
+                #     loss_adv = F.cross_entropy(logits_a, age_group.long())
+                # else:
+                #     loss_adv = 0.0 * logits.sum()
                 if age_group is not None:
-                    y_onehot = F.one_hot(y_disc.long(), num_classes=args.n_classes).float()
+                    y_onehot = _make_bin_onehot(y_disc, args.n_classes)  # STRICT: only bins
                     lam = lam_sched.at(epoch) if lam_sched is not None else 1.0
                     logits_a = adv(grl(z_prime, lam), y_onehot)
                     loss_adv = F.cross_entropy(logits_a, age_group.long())
                 else:
                     loss_adv = 0.0 * logits.sum()
-
                 # Regularizers
                 loss_prox = (z_prime - z).pow(2).mean() * getattr(args, 'prox_lambda', 1e-3)
                 with torch.no_grad():
@@ -426,7 +445,7 @@ def validate(cur, epoch, model, loader, loss_fn, args, gc=16, use_amp=False,
     for batch_idx, batch in enumerate(loader):
         if batch is None:
             continue
-        # print("batch", batch)
+        # print("batch", len(batch))
         if len(batch) == 7:
             data_MRI, data_WSI, data_omic, y_disc, event_time, censor, _ = batch
             age_group = None

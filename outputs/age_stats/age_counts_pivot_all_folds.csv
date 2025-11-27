@@ -1,0 +1,11 @@
+fold,split,old,young
+0,train,76,64
+0,val,17,20
+1,train,73,67
+1,val,26,11
+2,train,77,63
+2,val,16,21
+3,train,76,66
+3,val,17,18
+4,train,76,70
+4,val,17,14

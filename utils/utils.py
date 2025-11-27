@@ -118,18 +118,40 @@ def get_optim(model, args):
 
 def make_weights_for_balanced_classes_split(dataset):
     """
-    The variable weight_per_class is a list that stores the weight for each class.
-      The idea is to give more weight to underrepresented classes (classes with fewer samples) 
-      and less weight to overrepresented classes (classes with more samples).'
-    """
-    N = float(len(dataset))                                           
-    weight_per_class = [N/len(dataset.slide_cls_ids[c]) for c in range(len(dataset.slide_cls_ids))]                                                                                                     
-    weight = [0] * int(N)                                           
-    for idx in range(len(dataset)):   
-        y = dataset.getlabel(idx)                        
-        weight[idx] = weight_per_class[y]                                  
+    Compute class-balanced sample weights.
+    Handles edge cases where some classes may have zero samples.
 
-    return torch.DoubleTensor(weight)
+    Returns:
+        torch.DoubleTensor: weight for each sample index
+    """
+    N = float(len(dataset))
+    weights = [0.0] * int(N)
+    cls_sizes = [len(cls) for cls in dataset.slide_cls_ids]
+
+    # Handle potential empty classes
+    valid_sizes = [s for s in cls_sizes if s > 0]
+    if not valid_sizes:
+        raise ValueError("All classes appear empty — cannot compute class-balanced weights.")
+
+    avg_size = sum(valid_sizes) / len(valid_sizes)
+
+    weight_per_class = []
+    for size in cls_sizes:
+        if size > 0:
+            weight_per_class.append(N / size)
+        else:
+            # fallback: assign neutral weight based on average
+            weight_per_class.append(N / avg_size)
+            print(f"[WARN] Class with zero samples detected — using average-based weight fallback.")
+
+    for idx in range(len(dataset)):
+        y = dataset.getlabel(idx)
+        if y >= len(weight_per_class):
+            print(f"[WARN] label {y} out of range; skipping index {idx}")
+            continue
+        weights[idx] = weight_per_class[y]
+
+    return torch.DoubleTensor(weights)
 
 def initialize_weights(module):
     for m in module.modules():
