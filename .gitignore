@@ -8,3 +8,4 @@ vis_age_dist.py
 scripts/run_adv_train_eval_radiomics.sh
 scripts/run_adv_train_eval.sh
 results*/
+*/__pycache__/
